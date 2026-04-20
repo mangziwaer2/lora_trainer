@@ -1,4 +1,5 @@
 import type { MetadataRoute } from 'next';
+import { withBasePath } from '@/utils/basePath';
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
@@ -6,13 +7,13 @@ export default function manifest(): MetadataRoute.Manifest {
     short_name: 'AIToolkit',
     icons: [
       {
-        src: '/web-app-manifest-192x192.png',
+        src: withBasePath('/web-app-manifest-192x192.png'),
         sizes: '192x192',
         type: 'image/png',
         purpose: 'maskable',
       },
       {
-        src: '/web-app-manifest-512x512.png',
+        src: withBasePath('/web-app-manifest-512x512.png'),
         sizes: '512x512',
         type: 'image/png',
         purpose: 'maskable',

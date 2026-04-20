@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { apiClient, isAuthorizedState } from '@/utils/api';
 import { createGlobalState } from 'react-global-hooks';
+import { withBasePath } from '@/utils/basePath';
 
 interface AuthWrapperProps {
   authRequired: boolean;
@@ -91,7 +92,7 @@ export default function AuthWrapper({ authRequired, children }: AuthWrapperProps
         <div className="mb-4">
           {/* Replace with your own logo */}
           <div className="flex items-center justify-center">
-            <img src="/ostris_logo.png" alt="Ostris AI Toolkit" className="w-auto h-24 inline" />
+            <img src={withBasePath('/ostris_logo.png')} alt="Ostris AI Toolkit" className="w-auto h-24 inline" />
           </div>
         </div>
         <h1 className="text-4xl mb-6">AI Toolkit</h1>
@@ -103,7 +104,7 @@ export default function AuthWrapper({ authRequired, children }: AuthWrapperProps
           <div className="lg:hidden flex justify-center mb-4">
             {/* Mobile logo */}
             <div className="flex items-center justify-center">
-              <img src="/ostris_logo.png" alt="Ostris AI Toolkit" className="w-auto h-24 inline" />
+              <img src={withBasePath('/ostris_logo.png')} alt="Ostris AI Toolkit" className="w-auto h-24 inline" />
             </div>
           </div>
 

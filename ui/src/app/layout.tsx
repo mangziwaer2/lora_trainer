@@ -7,6 +7,7 @@ import ConfirmModal from '@/components/ConfirmModal';
 import { Suspense } from 'react';
 import AuthWrapper from '@/components/AuthWrapper';
 import DocModal from '@/components/DocModal';
+import { withBasePath } from '@/utils/basePath';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,6 +16,7 @@ const inter = Inter({ subsets: ['latin'] });
 export const metadata: Metadata = {
   title: 'Ostris - AI Toolkit',
   description: 'A toolkit for building AI things.',
+  manifest: withBasePath('/manifest.webmanifest'),
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
