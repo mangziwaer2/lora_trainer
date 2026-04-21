@@ -28,6 +28,7 @@ DEFAULTS: dict[str, Any] = {
     "dtype": "fp16",
     "save_dtype": "float16",
     "save_format": "safetensors",
+    "dataset_cache_dir": None,
     "sample_prompts": [],
     "sample_prompts_file": None,
     "sample_neg": "",
@@ -86,6 +87,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dtype", default=None, help="Training dtype, for example fp16 or bf16.")
     parser.add_argument("--save-dtype", default=None, help="Save dtype, for example float16 or bf16.")
     parser.add_argument("--save-format", default=None, choices=["safetensors", "diffusers"], help="Output format.")
+    parser.add_argument("--dataset-cache-dir", default=None, help="Optional writable cache directory for dataset metadata and disk caches.")
 
     parser.add_argument("--sample-prompt", dest="sample_prompts", action="append", default=None, help="Repeat to add sample prompts.")
     parser.add_argument("--sample-prompts-file", default=None, help="Text file with one sample prompt per line.")
@@ -177,6 +179,12 @@ def build_config(settings: dict[str, Any], repo_root: Path) -> dict[str, Any]:
     output_root = Path(settings["output"]).expanduser().resolve()
     output_root.mkdir(parents=True, exist_ok=True)
     model_path = normalize_model_path(settings["model"])
+    dataset_cache_dir = settings.get("dataset_cache_dir")
+    if dataset_cache_dir:
+        dataset_cache_dir = Path(dataset_cache_dir).expanduser().resolve()
+    else:
+        dataset_cache_dir = output_root / settings["name"] / "dataset_cache"
+    dataset_cache_dir.mkdir(parents=True, exist_ok=True)
     sample_prompts = load_sample_prompts(settings)
 
     disable_sampling = settings["disable_sampling"] or len(sample_prompts) == 0
@@ -216,6 +224,7 @@ def build_config(settings: dict[str, Any], repo_root: Path) -> dict[str, Any]:
                     "datasets": [
                         {
                             "folder_path": dataset_path,
+                            "cache_dir": str(dataset_cache_dir),
                             "mask_path": None,
                             "mask_min_value": 0.1,
                             "default_caption": "",

@@ -1093,8 +1093,7 @@ class ClipImageFileItemDTOMixin:
             return self._clip_vision_embeddings_path
         else:
             # we store latents in a folder in same path as image called _latent_cache
-            img_dir = os.path.dirname(self.clip_image_path)
-            latent_dir = os.path.join(img_dir, '_clip_vision_cache')
+            latent_dir = self.get_cache_subdir('_clip_vision_cache', self.clip_image_path)
             hash_dict = self.get_clip_vision_info_dict()
             filename_no_ext = os.path.splitext(os.path.basename(self.clip_image_path))[0]
             # get base64 hash of md5 checksum of hash_dict
@@ -1690,8 +1689,7 @@ class LatentCachingFileItemDTOMixin:
             return self._latent_path
         else:
             # we store latents in a folder in same path as image called _latent_cache
-            img_dir = os.path.dirname(self.path)
-            latent_dir = os.path.join(img_dir, '_latent_cache')
+            latent_dir = self.get_cache_subdir('_latent_cache')
             hash_dict = self.get_latent_info_dict()
             filename_no_ext = os.path.splitext(os.path.basename(self.path))[0]
             # get base64 hash of md5 checksum of hash_dict
@@ -1852,8 +1850,7 @@ class TextEmbeddingFileItemDTOMixin:
             return self._text_embedding_path
         else:
             # we store text embeddings in a folder in same path as image called _text_embedding_cache
-            img_dir = os.path.dirname(self.path)
-            te_dir = os.path.join(img_dir, '_t_e_cache')
+            te_dir = self.get_cache_subdir('_t_e_cache')
             hash_dict = self.get_text_embedding_info_dict()
             filename_no_ext = os.path.splitext(os.path.basename(self.path))[0]
             # get base64 hash of md5 checksum of hash_dict
@@ -2001,7 +1998,10 @@ class CLIPCachingMixin:
 
             # cache unconditionals
             print_acc(f" - Caching {self.clip_vision_num_unconditional_cache} unconditional clip vision to disk")
-            clip_vision_cache_path = os.path.join(self.dataset_config.clip_image_path, '_clip_vision_cache')
+            clip_cache_root = self.dataset_config.clip_image_path
+            if self.dataset_config.cache_dir is not None:
+                clip_cache_root = os.path.join(self.dataset_config.cache_dir, '_clip_image_inputs')
+            clip_vision_cache_path = os.path.join(clip_cache_root, '_clip_vision_cache')
 
             unconditional_paths = []
 

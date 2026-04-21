@@ -1,7 +1,10 @@
 name: kaggle_sdxl_lora
-dataset: /kaggle/input/your-dataset
-model: /kaggle/input/your-model/model.safetensors
+dataset: /kaggle/input/datasets/wangziwa2/lora-datasets/lora_enc
+model: /kaggle/input/models/skillfi490/wai-illustrious-v16/other/default/1/WAI_NSFW-illustrious16.safetensors
 output: /kaggle/working/ai-toolkit-output
+# Optional writable cache dir for read-only datasets such as /kaggle/input.
+# If omitted, the CLI defaults to <output>/<name>/dataset_cache.
+# dataset_cache_dir: /kaggle/working/ai-toolkit-output/kaggle_sdxl_lora/dataset_cache
 
 trigger_word: null
 steps: 20000

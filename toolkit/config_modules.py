@@ -831,6 +831,8 @@ class DatasetConfig:
         self.folder_path: str = kwargs.get('folder_path', None)
         # can be json or folder path
         self.dataset_path: str = kwargs.get('dataset_path', None)
+        # optional writable cache location for size db / latent cache / text embedding cache
+        self.cache_dir: str = kwargs.get('cache_dir', None)
 
         self.default_caption: str = kwargs.get('default_caption', None)
         # trigger word for just this dataset

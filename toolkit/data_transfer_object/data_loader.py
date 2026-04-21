@@ -1,4 +1,5 @@
 import os
+import hashlib
 import weakref
 from _weakref import ReferenceType
 from typing import TYPE_CHECKING, List, Union
@@ -48,12 +49,15 @@ class FileItemDTO(
         self.path = kwargs.get('path', '')
         self.dataset_config: 'DatasetConfig' = kwargs.get('dataset_config', None)
         self.is_video = self.dataset_config.num_frames > 1
+        self.dataset_root = kwargs.get('dataset_root', None)
+        self.dataset_cache_root = kwargs.get('dataset_cache_root', None)
         size_database = kwargs.get('size_database', {})
-        dataset_root =  kwargs.get('dataset_root', None)
         self.encode_control_in_text_embeddings = kwargs.get('encode_control_in_text_embeddings', False)
-        if dataset_root is not None:
-            # remove dataset root from path
-            file_key = self.path.replace(dataset_root, '')
+        if self.dataset_root is not None:
+            try:
+                file_key = os.path.relpath(self.path, self.dataset_root)
+            except ValueError:
+                file_key = os.path.basename(self.path)
         else:
             file_key = os.path.basename(self.path)
         
@@ -123,6 +127,25 @@ class FileItemDTO(
         self.is_reg = self.dataset_config.is_reg
         self.prior_reg = self.dataset_config.prior_reg
         self.tensor: Union[torch.Tensor, None] = None
+
+    def get_cache_subdir(self, folder_name: str, source_path: str = None) -> str:
+        source_path = source_path or self.path
+        source_dir = os.path.dirname(source_path)
+        if not self.dataset_cache_root:
+            return os.path.join(source_dir, folder_name)
+
+        if self.dataset_root is not None:
+            try:
+                relative_dir = os.path.relpath(source_dir, self.dataset_root)
+            except ValueError:
+                relative_dir = None
+            if relative_dir == '.':
+                return os.path.join(self.dataset_cache_root, folder_name)
+            if relative_dir is not None and not relative_dir.startswith('..'):
+                return os.path.join(self.dataset_cache_root, relative_dir, folder_name)
+
+        hashed_dir = hashlib.md5(source_dir.encode('utf-8')).hexdigest()[:16]
+        return os.path.join(self.dataset_cache_root, '_external', hashed_dir, folder_name)
 
     def cleanup(self):
         self.tensor = None

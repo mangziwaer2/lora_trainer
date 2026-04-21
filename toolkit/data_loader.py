@@ -1,7 +1,9 @@
 import copy
+import hashlib
 import json
 import os
 import random
+import tempfile
 import traceback
 from functools import lru_cache
 from typing import List, TYPE_CHECKING
@@ -35,6 +37,37 @@ if TYPE_CHECKING:
 
 image_extensions = ['.jpg', '.jpeg', '.png', '.webp']
 video_extensions = ['.mp4', '.avi', '.mov', '.webm', '.mkv', '.wmv', '.m4v', '.flv']
+
+
+def is_directory_writable(path: str) -> bool:
+    try:
+        os.makedirs(path, exist_ok=True)
+        fd, probe_path = tempfile.mkstemp(dir=path)
+        os.close(fd)
+        os.unlink(probe_path)
+        return True
+    except OSError:
+        return False
+
+
+def resolve_dataset_cache_dir(dataset_config: 'DatasetConfig', dataset_path: str, dataset_folder: str) -> str:
+    configured_cache_dir = dataset_config.cache_dir
+    if configured_cache_dir:
+        cache_dir = os.path.abspath(os.path.expanduser(configured_cache_dir))
+        os.makedirs(cache_dir, exist_ok=True)
+        return cache_dir
+
+    if is_directory_writable(dataset_folder):
+        return dataset_folder
+
+    cache_root = os.environ.get("AITK_CACHE_DIR")
+    if not cache_root:
+        cache_root = os.path.join(tempfile.gettempdir(), "ai-toolkit-cache")
+
+    dataset_hash = hashlib.md5(os.path.abspath(dataset_path).encode('utf-8')).hexdigest()[:16]
+    cache_dir = os.path.join(os.path.abspath(os.path.expanduser(cache_root)), dataset_hash)
+    os.makedirs(cache_dir, exist_ok=True)
+    return cache_dir
 
 
 class RescaleTransform:
@@ -466,8 +499,13 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
         dataset_folder = self.dataset_path
         if not os.path.isdir(self.dataset_path):
             dataset_folder = os.path.dirname(dataset_folder)
-        
-        dataset_size_file = os.path.join(dataset_folder, '.aitk_size.json')
+
+        dataset_cache_dir = resolve_dataset_cache_dir(self.dataset_config, self.dataset_path, dataset_folder)
+        self.dataset_config.cache_dir = dataset_cache_dir
+        if os.path.abspath(dataset_cache_dir) != os.path.abspath(dataset_folder):
+            print_acc(f"  -  Using writable dataset cache: {dataset_cache_dir}")
+
+        dataset_size_file = os.path.join(dataset_cache_dir, '.aitk_size.json')
         dataloader_version = "0.1.2"
         if os.path.exists(dataset_size_file):
             try:
@@ -497,6 +535,7 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
                     dataloader_transforms=self.transform,
                     size_database=self.size_database,
                     dataset_root=dataset_folder,
+                    dataset_cache_root=dataset_cache_dir,
                     encode_control_in_text_embeddings=self.sd.encode_control_in_text_embeddings if self.sd else False,
                 )
                 self.file_list.append(file_item)
