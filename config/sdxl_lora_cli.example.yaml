@@ -1,0 +1,47 @@
+name: kaggle_sdxl_lora
+dataset: /kaggle/input/your-dataset
+model: /kaggle/input/your-model/model.safetensors
+output: /kaggle/working/ai-toolkit-output
+
+trigger_word: null
+steps: 20000
+batch_size: 2
+gradient_accumulation: 1
+lr: 0.0001
+optimizer: adamw8bit
+save_every: 250
+sample_every: 250
+
+rank: 32
+conv_rank: 16
+resolution:
+  - 512
+  - 768
+  - 1024
+caption_ext: txt
+cache_latents_to_disk: false
+train_text_encoder: false
+low_vram: false
+
+dtype: fp16
+save_dtype: float16
+save_format: safetensors
+
+sample_prompts:
+  - 1girl, masterpiece, best quality
+  - portrait, detailed face, soft lighting
+sample_neg: ""
+sample_width: 512
+sample_height: 512
+sample_steps: 20
+guidance_scale: 6.0
+seed: 42
+walk_seed: true
+disable_sampling: false
+no_skip_first_sample: false
+
+# Optional:
+# sample_prompts_file: /kaggle/input/prompts/prompts.txt
+# config_path: /kaggle/working/generated_job_config.json
+# log: /kaggle/working/train.log
+# write_config_only: true
