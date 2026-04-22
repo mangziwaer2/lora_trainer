@@ -428,6 +428,22 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
         self.dataset_path = dataset_config.dataset_path
         if self.dataset_path is None:
             self.dataset_path = folder_path
+        if self.dataset_path is None:
+            raise ValueError("Dataset path is missing. Set folder_path or dataset_path in the dataset config.")
+
+        self.dataset_path = os.path.abspath(os.path.expanduser(self.dataset_path))
+        folder_path = os.path.abspath(os.path.expanduser(folder_path)) if folder_path is not None else None
+
+        if (
+            folder_path is not None
+            and os.path.isdir(folder_path)
+            and not os.path.isdir(self.dataset_path)
+        ):
+            print_acc(
+                f"Dataset path is not a directory: {self.dataset_path}. "
+                f"Falling back to folder_path: {folder_path}"
+            )
+            self.dataset_path = folder_path
 
         self.is_caching_latents = dataset_config.cache_latents or dataset_config.cache_latents_to_disk
         self.is_caching_latents_to_memory = dataset_config.cache_latents
@@ -459,12 +475,30 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
                 # only look for videos
                 extensions = video_extensions
             file_list = [os.path.join(root, file) for root, _, files in os.walk(self.dataset_path) for file in files if file.lower().endswith(tuple(extensions))]
+        elif os.path.isfile(self.dataset_path):
+            if not self.dataset_path.lower().endswith('.json'):
+                raise ValueError(
+                    f"Dataset path points to a file instead of a directory: {self.dataset_path}. "
+                    "Expected a dataset folder or a JSON mapping file."
+                )
         else:
-            # assume json
-            with open(self.dataset_path, 'r') as f:
-                self.caption_dict = json.load(f)
-                # keys are file paths
-                file_list = list(self.caption_dict.keys())
+            raise FileNotFoundError(f"Dataset path does not exist: {self.dataset_path}")
+
+        if os.path.isfile(self.dataset_path):
+            try:
+                with open(self.dataset_path, 'r', encoding='utf-8') as f:
+                    self.caption_dict = json.load(f)
+            except json.JSONDecodeError as e:
+                raise ValueError(
+                    f"Dataset JSON file is invalid or empty: {self.dataset_path}. "
+                    "Expected a JSON object mapping image paths to captions."
+                ) from e
+            if not isinstance(self.caption_dict, dict):
+                raise ValueError(
+                    f"Dataset JSON must contain a mapping/object at the top level: {self.dataset_path}"
+                )
+            # keys are file paths
+            file_list = list(self.caption_dict.keys())
                 
         # remove items in the _controls_ folder
         file_list = [x for x in file_list if not os.path.basename(os.path.dirname(x)) == "_controls"]

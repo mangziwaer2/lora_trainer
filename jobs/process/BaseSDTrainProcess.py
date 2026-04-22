@@ -473,7 +473,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         return sum(loss_values) / len(loss_values)
 
     def maybe_save_best_model(self, loss_dict):
-        if not self.accelerator.is_main_process or loss_dict is None:
+        if not self.accelerator.is_main_process or loss_dict is None or not self.save_config.save_best_model:
             return
 
         current_loss = self._get_primary_loss_value(loss_dict)

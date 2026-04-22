@@ -17,6 +17,7 @@ DEFAULTS: dict[str, Any] = {
     "lr": 1e-4,
     "optimizer": "adamw8bit",
     "save_every": 250,
+    "save_best_model": True,
     "sample_every": 250,
     "rank": 32,
     "conv_rank": 16,
@@ -68,6 +69,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lr", type=float, default=None, help="Learning rate.")
     parser.add_argument("--optimizer", default=None, help="Optimizer name.")
     parser.add_argument("--save-every", type=int, default=None, help="Checkpoint save interval.")
+    parser.add_argument(
+        "--save-best-model",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Enable or disable auto-saving the best-loss checkpoint.",
+    )
     parser.add_argument("--sample-every", type=int, default=None, help="Sample image interval.")
     parser.add_argument("--rank", type=int, default=None, help="LoRA linear rank.")
     parser.add_argument("--conv-rank", type=int, default=None, help="LoRA conv rank.")
@@ -217,6 +224,7 @@ def build_config(settings: dict[str, Any], repo_root: Path) -> dict[str, Any]:
                     "save": {
                         "dtype": settings["save_dtype"],
                         "save_every": settings["save_every"],
+                        "save_best_model": settings["save_best_model"],
                         "max_step_saves_to_keep": 4,
                         "save_format": settings["save_format"],
                         "push_to_hub": False,
