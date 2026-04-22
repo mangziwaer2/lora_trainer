@@ -919,7 +919,13 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     paths = [p for p in paths if '_cn' not in p]
 
                 if len(paths) > 0:
-                    latest_path = max(paths, key=os.path.getctime)
+                    def get_path_sort_key(path):
+                        basename = os.path.basename(path)
+                        match = re.match(rf"^{re.escape(name)}_(\d+)", basename)
+                        step = int(match.group(1)) if match else -1
+                        return (step, os.path.getctime(path))
+
+                    latest_path = max(paths, key=get_path_sort_key)
         
         if latest_path is None and self.network_config is not None and self.network_config.pretrained_lora_path is not None:
             # set pretrained lora path as load path if we do not have a checkpoint to resume from
