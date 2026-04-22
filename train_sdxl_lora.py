@@ -25,6 +25,7 @@ DEFAULTS: dict[str, Any] = {
     "optimizer": "adamw8bit",
     "save_every": 250,
     "save_best_model": True,
+    "max_step_saves_to_keep": 4,
     "sample_every": 250,
     "rank": 32,
     "conv_rank": 16,
@@ -90,6 +91,7 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Enable or disable auto-saving the best-loss checkpoint.",
     )
+    parser.add_argument("--max-step-saves-to-keep", type=int, default=None, help="How many step checkpoints to keep. Use 0 to keep all.")
     parser.add_argument("--sample-every", type=int, default=None, help="Sample image interval.")
     parser.add_argument("--rank", type=int, default=None, help="LoRA linear rank.")
     parser.add_argument("--conv-rank", type=int, default=None, help="LoRA conv rank.")
@@ -163,6 +165,8 @@ def merge_settings(args: argparse.Namespace) -> dict[str, Any]:
 
     if not isinstance(settings["resolution"], list) or not settings["resolution"]:
         raise ValueError("resolution must be a non-empty list, for example [512, 768, 1024]")
+    if settings["max_step_saves_to_keep"] < 0:
+        raise ValueError("max_step_saves_to_keep must be >= 0")
 
     if settings.get("sample_prompts") is None:
         settings["sample_prompts"] = []
@@ -242,7 +246,7 @@ def build_config(settings: dict[str, Any], repo_root: Path) -> dict[str, Any]:
                         "dtype": settings["save_dtype"],
                         "save_every": settings["save_every"],
                         "save_best_model": settings["save_best_model"],
-                        "max_step_saves_to_keep": 4,
+                        "max_step_saves_to_keep": settings["max_step_saves_to_keep"],
                         "save_format": settings["save_format"],
                         "push_to_hub": False,
                     },
