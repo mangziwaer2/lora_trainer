@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -9,8 +10,14 @@ from typing import Any
 import yaml
 
 
+IS_KAGGLE = bool(os.environ.get("KAGGLE_KERNEL_RUN_TYPE")) or Path("/kaggle").exists()
+
+
 DEFAULTS: dict[str, Any] = {
     "trigger_word": None,
+    "performance_log_every": 0 if IS_KAGGLE else 10,
+    "disable_progress_bar": IS_KAGGLE,
+    "progress_bar_mininterval": 60.0 if IS_KAGGLE else 1.0,
     "steps": 3000,
     "batch_size": 1,
     "gradient_accumulation": 1,
@@ -62,6 +69,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", default=None, help="Output root folder.")
     parser.add_argument("--name", default=None, help="Training job name.")
     parser.add_argument("--trigger-word", default=None, help="Optional trigger word.")
+    parser.add_argument("--performance-log-every", type=int, default=None, help="Print timer stats every N steps. Use 0 to disable.")
+    parser.add_argument(
+        "--disable-progress-bar",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Enable or disable the tqdm training progress bar.",
+    )
+    parser.add_argument("--progress-bar-mininterval", type=float, default=None, help="Minimum seconds between tqdm refreshes.")
 
     parser.add_argument("--steps", type=int, default=None, help="Training steps.")
     parser.add_argument("--batch-size", type=int, default=None, help="Batch size.")
@@ -208,7 +223,9 @@ def build_config(settings: dict[str, Any], repo_root: Path) -> dict[str, Any]:
                     "sqlite_db_path": str((repo_root / "aitk_db.db").resolve()),
                     "device": "cuda",
                     "trigger_word": settings["trigger_word"],
-                    "performance_log_every": 10,
+                    "performance_log_every": settings["performance_log_every"],
+                    "disable_progress_bar": settings["disable_progress_bar"],
+                    "progress_bar_mininterval": settings["progress_bar_mininterval"],
                     "network": {
                         "type": "lora",
                         "linear": settings["rank"],

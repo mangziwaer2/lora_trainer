@@ -22,6 +22,8 @@ class BaseProcess(object):
         self.meta = copy.deepcopy(self.job.meta)
         self.timer: Timer = Timer(f'{self.name} Timer')
         self.performance_log_every = self.get_conf('performance_log_every', 0)
+        self.disable_progress_bar = self.get_conf('disable_progress_bar', False)
+        self.progress_bar_mininterval = float(self.get_conf('progress_bar_mininterval', 1.0))
 
         print(json.dumps(self.config, indent=4))
         

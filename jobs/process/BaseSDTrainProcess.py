@@ -2135,13 +2135,14 @@ class BaseSDTrainProcess(BaseTrainProcess):
             print_acc("Generating baseline samples before training")
             self.sample(self.step_num)
         
-        if self.accelerator.is_local_main_process:
+        if self.accelerator.is_local_main_process and not self.disable_progress_bar:
             self.progress_bar = ToolkitProgressBar(
                 total=self.train_config.steps,
                 desc=self.job.name,
                 leave=True,
                 initial=self.step_num,
                 iterable=range(0, self.train_config.steps),
+                mininterval=self.progress_bar_mininterval,
             )
             self.progress_bar.pause()
         else:
