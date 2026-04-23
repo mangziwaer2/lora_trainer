@@ -15,29 +15,89 @@ sys.path.insert(0, os.getcwd())
 os.environ['DISABLE_TELEMETRY'] = 'YES'
 
 
-def validate_numpy_torch_compatibility():
+def _torch_dtype_from_numpy_dtype(torch, np, dtype):
+    if np.issubdtype(dtype, np.bool_):
+        return torch.bool
+    if np.issubdtype(dtype, np.signedinteger):
+        return {
+            1: torch.int8,
+            2: torch.int16,
+            4: torch.int32,
+            8: torch.int64,
+        }.get(dtype.itemsize, torch.int64)
+    if np.issubdtype(dtype, np.unsignedinteger):
+        return {
+            1: torch.uint8,
+            2: torch.int32,
+            4: torch.int64,
+            8: torch.int64,
+        }.get(dtype.itemsize, torch.int64)
+    if np.issubdtype(dtype, np.floating):
+        return {
+            2: torch.float16,
+            4: torch.float32,
+            8: torch.float64,
+        }.get(dtype.itemsize, torch.float32)
+    if np.issubdtype(dtype, np.complexfloating):
+        return {
+            8: torch.complex64,
+            16: torch.complex128,
+        }.get(dtype.itemsize, torch.complex64)
+    return None
+
+
+def _fallback_tensor_from_numpy(torch, np, array):
+    dtype = _torch_dtype_from_numpy_dtype(torch, np, array.dtype)
+    data = array.tolist()
+    if dtype is not None:
+        return torch.tensor(data, dtype=dtype)
+    return torch.tensor(data)
+
+
+def ensure_numpy_torch_compatibility():
     try:
         import numpy as np
         import torch
     except Exception:
         return
 
+    original_from_numpy = torch.from_numpy
+
     try:
         probe = np.arange(0, 4, dtype=np.float32)
-        torch.from_numpy(probe)
+        original_from_numpy(probe)
     except TypeError as exc:
         numpy_version = getattr(np, "__version__", "unknown")
         torch_version = getattr(torch, "__version__", "unknown")
-        raise RuntimeError(
-            "Detected an incompatible NumPy/Torch combination. "
-            f"numpy={numpy_version}, torch={torch_version}. "
-            "This environment cannot use torch.from_numpy(), which diffusers schedulers require. "
-            "Install numpy<2 (for example `pip install \"numpy<2\"` or `pip install numpy==1.26.4`) "
-            "and restart the environment."
-        ) from exc
+
+        def patched_from_numpy(array):
+            try:
+                return original_from_numpy(array)
+            except TypeError as inner_exc:
+                if isinstance(array, np.ndarray):
+                    return _fallback_tensor_from_numpy(torch, np, array)
+                raise inner_exc
+
+        torch.from_numpy = patched_from_numpy
+
+        try:
+            patched_from_numpy(probe)
+            print(
+                "Warning: installed torch.from_numpy compatibility shim for "
+                f"numpy={numpy_version}, torch={torch_version}",
+                file=sys.stderr,
+            )
+        except Exception:
+            raise RuntimeError(
+                "Detected an incompatible NumPy/Torch combination. "
+                f"numpy={numpy_version}, torch={torch_version}. "
+                "This environment cannot use torch.from_numpy(), which diffusers schedulers require. "
+                "Install numpy<2 (for example `pip install \"numpy<2\"` or `pip install numpy==1.26.4`) "
+                "and restart the environment."
+            ) from exc
 
 
-validate_numpy_torch_compatibility()
+ensure_numpy_torch_compatibility()
 
 # check if we have DEBUG_TOOLKIT in env
 if os.environ.get("DEBUG_TOOLKIT", "0") == "1":
