@@ -14,6 +14,31 @@ sys.path.insert(0, os.getcwd())
 # turn off diffusers telemetry until I can figure out how to make it opt-in
 os.environ['DISABLE_TELEMETRY'] = 'YES'
 
+
+def validate_numpy_torch_compatibility():
+    try:
+        import numpy as np
+        import torch
+    except Exception:
+        return
+
+    try:
+        probe = np.arange(0, 4, dtype=np.float32)
+        torch.from_numpy(probe)
+    except TypeError as exc:
+        numpy_version = getattr(np, "__version__", "unknown")
+        torch_version = getattr(torch, "__version__", "unknown")
+        raise RuntimeError(
+            "Detected an incompatible NumPy/Torch combination. "
+            f"numpy={numpy_version}, torch={torch_version}. "
+            "This environment cannot use torch.from_numpy(), which diffusers schedulers require. "
+            "Install numpy<2 (for example `pip install \"numpy<2\"` or `pip install numpy==1.26.4`) "
+            "and restart the environment."
+        ) from exc
+
+
+validate_numpy_torch_compatibility()
+
 # check if we have DEBUG_TOOLKIT in env
 if os.environ.get("DEBUG_TOOLKIT", "0") == "1":
     # set torch to trace mode

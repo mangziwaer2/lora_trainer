@@ -31,6 +31,8 @@ DEFAULTS: dict[str, Any] = {
     "conv_rank": 16,
     "resolution": [512, 768, 1024],
     "caption_ext": "txt",
+    "decode_images": True,
+    "decode_key": 123456789,
     "cache_latents_to_disk": False,
     "train_text_encoder": False,
     "low_vram": False,
@@ -104,6 +106,13 @@ def parse_args() -> argparse.Namespace:
         help="Bucket resolutions, for example --resolution 512 768 1024",
     )
     parser.add_argument("--caption-ext", default=None, help="Caption file extension.")
+    parser.add_argument(
+        "--decode-images",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Enable or disable XOR decoding for encoded image datasets.",
+    )
+    parser.add_argument("--decode-key", type=int, default=None, help="Decode key for XOR-encoded image datasets.")
     parser.add_argument("--cache-latents-to-disk", action="store_true", default=None, help="Cache latents to disk.")
     parser.add_argument("--train-text-encoder", action="store_true", default=None, help="Enable text encoder training.")
     parser.add_argument("--low-vram", action="store_true", default=None, help="Enable low VRAM model mode.")
@@ -258,6 +267,8 @@ def build_config(settings: dict[str, Any], repo_root: Path) -> dict[str, Any]:
                             "mask_min_value": 0.1,
                             "default_caption": "",
                             "caption_ext": settings["caption_ext"],
+                            "decode_images": settings["decode_images"],
+                            "decode_key": settings["decode_key"],
                             "caption_dropout_rate": 0.05,
                             "cache_latents_to_disk": settings["cache_latents_to_disk"],
                             "is_reg": False,

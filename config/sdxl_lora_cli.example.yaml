@@ -1,5 +1,5 @@
 name: kaggle_sdxl_lora
-dataset: /kaggle/input/datasets/wangziwa2/lora-datasets/lora_enc
+dataset: /kaggle/input/datasets/wangziwa2/lora-dataset2/lora_enc
 model: /kaggle/input/models/skillfi490/wai-illustrious-v16/other/default/1/WAI_NSFW-illustrious16.safetensors
 output: /kaggle/working/ai-toolkit-output
 # Optional writable cache dir for read-only datasets such as /kaggle/input.
@@ -12,9 +12,10 @@ batch_size: 2
 gradient_accumulation: 1
 lr: 0.0001
 optimizer: adamw8bit
-save_every: 1000
-save_best_model: false
-sample_every: 0
+save_every: 250
+max_step_saves_to_keep: 20
+save_best_model: true
+sample_every: 250
 
 rank: 32
 conv_rank: 16
@@ -31,9 +32,12 @@ dtype: fp16
 save_dtype: float16
 save_format: safetensors
 
+decode_images: true
+decode_key: 123456789
+
 sample_prompts:
-  - 1girl, masterpiece, best quality
-  - portrait, detailed face, soft lighting
+  - 1girl, anime coloring,dress,sfw,posing,embarrassed,thighhighs,
+  - 1girl,anime coloring,maid,sfw,off shoulder,strapless,miniskirt,embarrassed,clothes,pull,loose socks,pose,dynamic emotion,
 sample_neg: ""
 sample_width: 512
 sample_height: 512
@@ -41,7 +45,7 @@ sample_steps: 20
 guidance_scale: 6.0
 seed: 42
 walk_seed: true
-disable_sampling: true
+disable_sampling: false
 no_skip_first_sample: false
 
 # Optional:

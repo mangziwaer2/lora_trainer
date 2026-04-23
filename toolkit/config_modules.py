@@ -838,6 +838,10 @@ class DatasetConfig:
         self.default_caption: str = kwargs.get('default_caption', None)
         # trigger word for just this dataset
         self.trigger_word: str = kwargs.get('trigger_word', None)
+        # encoded datasets are decoded at load time with a deterministic XOR mask
+        self.decode_images: bool = kwargs.get('decode_images', True)
+        decode_key = kwargs.get('decode_key', 123456789)
+        self.decode_key: int = 123456789 if decode_key is None else int(decode_key)
         random_triggers = kwargs.get('random_triggers', [])
         # if they are a string, load them from a file
         if isinstance(random_triggers, str) and os.path.exists(random_triggers):

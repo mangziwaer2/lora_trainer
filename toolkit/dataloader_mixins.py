@@ -42,6 +42,7 @@ if TYPE_CHECKING:
 
 accelerator = get_accelerator()
 
+
 # def get_associated_caption_from_img_path(img_path):
 # https://demo.albumentations.ai/
 class Augments:
@@ -85,6 +86,7 @@ def decode_image_simple(enc_path, key=123456789):
     random_mask = _get_decode_mask(tuple(encoded_array.shape), key)
     decoded = np.bitwise_xor(encoded_array, random_mask)
     return Image.fromarray(decoded, mode='RGB')
+
 
 def standardize_images(images):
     """
@@ -685,9 +687,14 @@ class ImageProcessingDTOMixin:
                 self.load_unconditional_image()
             return
         try:
-            img=decode_image_simple(self.path)
-            # img = Image.open(self.path)
-            img = exif_transpose(img)
+            if self.dataset_config.decode_images:
+                img = decode_image_simple(self.path, key=self.dataset_config.decode_key)
+                img = exif_transpose(img)
+            else:
+                with Image.open(self.path) as raw_img:
+                    img = exif_transpose(raw_img)
+                    if img is raw_img:
+                        img = img.copy()
         except Exception as e:
             print_acc(f"Error: {e}")
             print_acc(f"Error loading image: {self.path}")
@@ -1661,7 +1668,7 @@ class LatentCachingFileItemDTOMixin:
         # sd1 or sdxl or others
         self.latent_space_version = 'sd1'
         # todo, increment this if we change the latent format to invalidate cache
-        self.latent_version = 1
+        self.latent_version = 2
 
     def get_latent_info_dict(self: 'FileItemDTO'):
         item = OrderedDict([
@@ -1680,6 +1687,9 @@ class LatentCachingFileItemDTOMixin:
             item["flip_x"] = True
         if self.flip_y:
             item["flip_y"] = True
+        item["decode_images"] = bool(self.dataset_config.decode_images)
+        if self.dataset_config.decode_images:
+            item["decode_key"] = int(self.dataset_config.decode_key)
         if self.dataset_config.num_frames > 1:
             item["num_frames"] = self.dataset_config.num_frames
         return item

@@ -1,3 +1,4 @@
+numpy<2
 torchao==0.10.0
 safetensors
 diffusers==0.33.0
