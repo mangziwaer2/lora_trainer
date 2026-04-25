@@ -1117,6 +1117,24 @@ class StableDiffusion:
     def add_status_update_hook(self, func):
         self._status_update_hooks.append(func)
 
+    def ensure_vae_decode_dtype_matches(self, vae):
+        if vae is None or getattr(vae, "_aitk_decode_dtype_patched", False):
+            return
+
+        original_decode = vae.decode
+
+        def decode_with_matching_dtype(z, *args, **kwargs):
+            try:
+                vae_param = next(vae.parameters())
+                if z.dtype != vae_param.dtype or z.device != vae_param.device:
+                    z = z.to(device=vae_param.device, dtype=vae_param.dtype)
+            except StopIteration:
+                pass
+            return original_decode(z, *args, **kwargs)
+
+        vae.decode = decode_with_matching_dtype
+        vae._aitk_decode_dtype_patched = True
+
     @torch.no_grad()
     def generate_images(
             self,
@@ -1341,6 +1359,7 @@ class StableDiffusion:
             flush()
             # disable progress bar
             pipeline.set_progress_bar_config(disable=True)
+            self.ensure_vae_decode_dtype_matches(pipeline.vae)
 
             if use_low_vram_sampling:
                 try:
@@ -1359,6 +1378,8 @@ class StableDiffusion:
 
             if sampler.startswith("sample_"):
                 pipeline.set_scheduler(sampler)
+
+        self.ensure_vae_decode_dtype_matches(pipeline.vae)
 
         refiner_pipeline = None
         if self.refiner_unet:
