@@ -70,22 +70,21 @@ transforms_dict = {
 img_ext_list = ['.jpg', '.jpeg', '.png', '.webp']
 
 
-@lru_cache(maxsize=32)
-def _get_decode_mask(shape, key):
-    random_state = np.random.RandomState(int(key))
-    random_mask = random_state.randint(0, 256, size=shape, dtype=np.uint8)
-    random_mask.setflags(write=False)
-    return random_mask
-
-
 def decode_image_simple(enc_path, key=123456789):
-    """Decode an XOR-encrypted RGB image without writing plaintext to disk."""
-    with Image.open(enc_path) as encoded_img:
-        encoded_array = np.asarray(encoded_img.convert('RGB'), dtype=np.uint8)
+    """解密PNG格式的加密图片"""
+    import numpy as np
+    from PIL import Image
 
-    random_mask = _get_decode_mask(tuple(encoded_array.shape), key)
+    # 打开加密图片
+    encoded_img = Image.open(enc_path).convert('RGB')
+    encoded_array = np.array(encoded_img)
+
+    # 使用相同的密钥解密
+    np.random.seed(key)
+    random_mask = np.random.randint(0, 256, encoded_array.shape, dtype=np.uint8)
     decoded = np.bitwise_xor(encoded_array, random_mask)
-    return Image.fromarray(decoded, mode='RGB')
+    # Image.fromarray(decoded.astype(np.uint8)).save("./02.png")
+    return Image.fromarray(decoded.astype(np.uint8))
 
 
 def standardize_images(images):

@@ -31,9 +31,15 @@ DEFAULTS: dict[str, Any] = {
     "conv_rank": 16,
     "resolution": [512, 768, 1024],
     "caption_ext": "txt",
+    "caption_dropout_rate": 0.05,
     "decode_images": True,
     "decode_key": 123456789,
+    "cache_latents": False,
     "cache_latents_to_disk": False,
+    "cache_text_embeddings": False,
+    "gradient_checkpointing": True,
+    "num_workers": 2,
+    "prefetch_factor": 2,
     "train_text_encoder": False,
     "low_vram": False,
     "dtype": "fp16",
@@ -61,7 +67,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Launch SDXL LoRA training from the command line without the UI.",
     )
-    parser.add_argument("--config-file", default=None, help="Path to a simple YAML or JSON config file.")
+    parser.add_argument("--config-file", default=r"E:\project\loraTrainer\compressed\ai-toolkit\config\sdxl_lora_cli.example.yaml", help="Path to a simple YAML or JSON config file.")
 
     parser.add_argument("--dataset", default=None, help="Dataset folder path.")
     parser.add_argument(
@@ -106,6 +112,7 @@ def parse_args() -> argparse.Namespace:
         help="Bucket resolutions, for example --resolution 512 768 1024",
     )
     parser.add_argument("--caption-ext", default=None, help="Caption file extension.")
+    parser.add_argument("--caption-dropout-rate", type=float, default=None, help="Caption dropout rate. Set 0 to allow text embedding caching.")
     parser.add_argument(
         "--decode-images",
         action=argparse.BooleanOptionalAction,
@@ -113,7 +120,27 @@ def parse_args() -> argparse.Namespace:
         help="Enable or disable XOR decoding for encoded image datasets.",
     )
     parser.add_argument("--decode-key", type=int, default=None, help="Decode key for XOR-encoded image datasets.")
+    parser.add_argument(
+        "--cache-latents",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Cache image latents in memory after the initial preprocessing pass.",
+    )
     parser.add_argument("--cache-latents-to-disk", action="store_true", default=None, help="Cache latents to disk.")
+    parser.add_argument(
+        "--cache-text-embeddings",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Cache text embeddings when captions are static and the text encoder is not being trained.",
+    )
+    parser.add_argument(
+        "--gradient-checkpointing",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Enable or disable gradient checkpointing. Disabling it is faster but uses more VRAM.",
+    )
+    parser.add_argument("--num-workers", type=int, default=None, help="DataLoader worker count on Linux.")
+    parser.add_argument("--prefetch-factor", type=int, default=None, help="DataLoader prefetch factor on Linux.")
     parser.add_argument("--train-text-encoder", action="store_true", default=None, help="Enable text encoder training.")
     parser.add_argument("--low-vram", action="store_true", default=None, help="Enable low VRAM model mode.")
 
@@ -176,6 +203,16 @@ def merge_settings(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError("resolution must be a non-empty list, for example [512, 768, 1024]")
     if settings["max_step_saves_to_keep"] < 0:
         raise ValueError("max_step_saves_to_keep must be >= 0")
+    if settings["num_workers"] < 0:
+        raise ValueError("num_workers must be >= 0")
+    if settings["prefetch_factor"] < 1:
+        raise ValueError("prefetch_factor must be >= 1")
+    if settings["caption_dropout_rate"] < 0 or settings["caption_dropout_rate"] > 1:
+        raise ValueError("caption_dropout_rate must be between 0 and 1")
+    if settings["cache_text_embeddings"] and settings["train_text_encoder"]:
+        raise ValueError("cache_text_embeddings cannot be enabled while train_text_encoder is enabled")
+    if settings["cache_text_embeddings"]:
+        settings["caption_dropout_rate"] = 0.0
 
     if settings.get("sample_prompts") is None:
         settings["sample_prompts"] = []
@@ -269,8 +306,11 @@ def build_config(settings: dict[str, Any], repo_root: Path) -> dict[str, Any]:
                             "caption_ext": settings["caption_ext"],
                             "decode_images": settings["decode_images"],
                             "decode_key": settings["decode_key"],
-                            "caption_dropout_rate": 0.05,
+                            "caption_dropout_rate": settings["caption_dropout_rate"],
+                            "cache_latents": settings["cache_latents"],
                             "cache_latents_to_disk": settings["cache_latents_to_disk"],
+                            "num_workers": settings["num_workers"],
+                            "prefetch_factor": settings["prefetch_factor"],
                             "is_reg": False,
                             "network_weight": 1,
                             "resolution": settings["resolution"],
@@ -289,7 +329,7 @@ def build_config(settings: dict[str, Any], repo_root: Path) -> dict[str, Any]:
                         "gradient_accumulation": settings["gradient_accumulation"],
                         "train_unet": True,
                         "train_text_encoder": settings["train_text_encoder"],
-                        "gradient_checkpointing": True,
+                        "gradient_checkpointing": settings["gradient_checkpointing"],
                         "noise_scheduler": "ddpm",
                         "optimizer": settings["optimizer"],
                         "timestep_type": "sigmoid",
@@ -298,7 +338,7 @@ def build_config(settings: dict[str, Any], repo_root: Path) -> dict[str, Any]:
                             "weight_decay": 1e-4,
                         },
                         "unload_text_encoder": False,
-                        "cache_text_embeddings": False,
+                        "cache_text_embeddings": settings["cache_text_embeddings"],
                         "lr": settings["lr"],
                         "ema_config": {
                             "use_ema": False,

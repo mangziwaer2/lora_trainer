@@ -4,7 +4,6 @@ from typing import List, Optional, Literal, Tuple, Union, TYPE_CHECKING, Dict
 import random
 
 import torch
-import torchaudio
 
 from toolkit.prompt_utils import PromptEmbeds
 

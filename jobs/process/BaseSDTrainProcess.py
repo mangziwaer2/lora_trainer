@@ -30,7 +30,7 @@ from toolkit.data_loader import get_dataloader_from_datasets, trigger_dataloader
 from toolkit.data_transfer_object.data_loader import FileItemDTO, DataLoaderBatchDTO
 from toolkit.ema import ExponentialMovingAverage
 from toolkit.embedding import Embedding
-from toolkit.image_utils import show_tensors, show_latents, reduce_contrast
+from toolkit.image_utils import show_tensors, show_latents, save_tensors, reduce_contrast
 from toolkit.ip_adapter import IPAdapter
 from toolkit.lora_special import LoRASpecialNetwork
 from toolkit.lorm import convert_diffusers_unet_to_lorm, count_parameters, print_lorm_extract_details, \
@@ -133,6 +133,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
         self.best_model_dir = os.path.join(self.save_root, 'best')
         self.best_model_info_path = os.path.join(self.best_model_dir, 'best_model_info.json')
         self._load_best_model_info()
+        self.debug_first_batch_dir = os.environ.get("AITK_DEBUG_FIRST_BATCH_DIR", None)
+        self._did_dump_first_batch_debug = False
         self.optimizer: torch.optim.Optimizer = None
         self.lr_scheduler = None
         self.data_loader: Union[DataLoader, None] = None
@@ -257,6 +259,61 @@ class BaseSDTrainProcess(BaseTrainProcess):
         self.ema: ExponentialMovingAverage = None
         
         validate_configs(self.train_config, self.model_config, self.save_config, self.dataset_configs)
+
+    def maybe_dump_first_batch_debug(
+            self,
+            batch: 'DataLoaderBatchDTO',
+            imgs: Optional[torch.Tensor],
+            latents: Optional[torch.Tensor],
+    ):
+        if self._did_dump_first_batch_debug:
+            return
+        if not self.debug_first_batch_dir:
+            return
+        if not self.accelerator.is_local_main_process:
+            return
+
+        try:
+            debug_dir = os.path.abspath(os.path.expanduser(self.debug_first_batch_dir))
+            os.makedirs(debug_dir, exist_ok=True)
+
+            num_items = 0
+            if imgs is not None:
+                num_items = min(4, imgs.shape[0])
+                save_tensors(
+                    imgs[:num_items].detach().to("cpu", dtype=torch.float32),
+                    path=os.path.join(debug_dir, "first_batch_input.png"),
+                )
+
+            if latents is not None:
+                if num_items == 0:
+                    num_items = min(4, latents.shape[0])
+                decoded_latents = self.sd.decode_latents(
+                    latents[:num_items].detach(),
+                    device="cpu",
+                    dtype=torch.float32,
+                )
+                save_tensors(
+                    decoded_latents.detach().to("cpu", dtype=torch.float32),
+                    path=os.path.join(debug_dir, "first_batch_latent_decode.png"),
+                )
+
+            debug_info = {
+                "captions": batch.get_caption_list()[:num_items],
+                "paths": [item.path for item in batch.file_items[:num_items]],
+                "is_reg": batch.get_is_reg_list()[:num_items],
+                "decode_images": bool(batch.dataset_config.decode_images) if batch.dataset_config is not None else None,
+                "decode_key": int(batch.dataset_config.decode_key) if batch.dataset_config is not None and batch.dataset_config.decode_images else None,
+                "cache_latents": bool(batch.dataset_config.cache_latents) if batch.dataset_config is not None else None,
+                "cache_latents_to_disk": bool(batch.dataset_config.cache_latents_to_disk) if batch.dataset_config is not None else None,
+            }
+            with open(os.path.join(debug_dir, "first_batch_debug.json"), "w", encoding="utf-8") as f:
+                json.dump(debug_info, f, indent=2, ensure_ascii=False)
+
+            print_acc(f"Saved first-batch debug artifacts to {debug_dir}")
+            self._did_dump_first_batch_debug = True
+        except Exception as e:
+            print_acc(f"Failed to save first-batch debug artifacts: {e}")
         
         do_profiler = self.get_conf('torch_profiler', False)
         self.torch_profiler = None if not do_profiler else torch.profiler.profile(
@@ -1229,6 +1286,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
                     # show_latents(latents, self.sd.vae, 'latents')
 
+                self.maybe_dump_first_batch_debug(batch=batch, imgs=imgs, latents=latents)
 
                 if batch.unconditional_tensor is not None and batch.unconditional_latents is None:
                     unconditional_imgs = batch.unconditional_tensor

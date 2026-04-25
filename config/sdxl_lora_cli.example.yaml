@@ -1,21 +1,21 @@
-name: kaggle_sdxl_lora
-dataset: /kaggle/input/datasets/wangziwa2/lora-dataset2/lora_enc
-model: /kaggle/input/models/skillfi490/wai-illustrious-v16/other/default/1/WAI_NSFW-illustrious16.safetensors
-output: /kaggle/working/ai-toolkit-output
+name: sdxl_lora
+dataset: E:\IDrawing\ComfyUI-aki-v1.7\ComfyUI\output\lora_enc
+model: E:\IDrawing\forge7\models\Stable-diffusion/bespokeillmix_v10.safetensors
+output: ./ai-toolkit-output
 # Optional writable cache dir for read-only datasets such as /kaggle/input.
 # If omitted, the CLI defaults to <output>/<name>/dataset_cache.
 # dataset_cache_dir: /kaggle/working/ai-toolkit-output/kaggle_sdxl_lora/dataset_cache
 
 trigger_word: null
-steps: 20000
+steps: 15000
 batch_size: 2
 gradient_accumulation: 1
 lr: 0.0001
 optimizer: adamw8bit
-save_every: 250
-max_step_saves_to_keep: 20
+save_every: 1000
+max_step_saves_to_keep: 15
 save_best_model: true
-sample_every: 250
+sample_every: 1000
 
 rank: 32
 conv_rank: 16
@@ -39,10 +39,10 @@ sample_prompts:
   - 1girl, anime coloring,dress,sfw,posing,embarrassed,thighhighs,
   - 1girl,anime coloring,maid,sfw,off shoulder,strapless,miniskirt,embarrassed,clothes,pull,loose socks,pose,dynamic emotion,
 sample_neg: ""
-sample_width: 512
-sample_height: 512
+sample_width: 1024
+sample_height: 1024
 sample_steps: 20
-guidance_scale: 6.0
+guidance_scale: 2.0
 seed: 42
 walk_seed: true
 disable_sampling: false
