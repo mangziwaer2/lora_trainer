@@ -1,7 +1,7 @@
 name: sdxl_lora
-dataset: E:\IDrawing\ComfyUI-aki-v1.7\ComfyUI\output\lora_enc
-model: E:\IDrawing\forge7\models\Stable-diffusion/bespokeillmix_v10.safetensors
-output: ./ai-toolkit-output
+dataset: /kaggle/input/datasets/wangziwa2/lora-dataset2/lora_enc
+model: John6666/bespoke-illmix-v10-sdxl
+output: /kaggle/working/ai-toolkit-output
 # Optional writable cache dir for read-only datasets such as /kaggle/input.
 # If omitted, the CLI defaults to <output>/<name>/dataset_cache.
 # dataset_cache_dir: /kaggle/working/ai-toolkit-output/kaggle_sdxl_lora/dataset_cache

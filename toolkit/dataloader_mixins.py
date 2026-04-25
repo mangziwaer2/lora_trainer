@@ -87,6 +87,21 @@ def decode_image_simple(enc_path, key=123456789):
     return Image.fromarray(decoded.astype(np.uint8))
 
 
+def maybe_save_debug_decoded_image(img: Image.Image, source_path: str):
+    debug_dir = os.environ.get('AITK_DEBUG_SAVE_DECODED_DIR')
+    if not debug_dir:
+        return
+
+    try:
+        os.makedirs(debug_dir, exist_ok=True)
+        filename_no_ext = os.path.splitext(os.path.basename(source_path))[0]
+        path_hash = hashlib.md5(os.path.abspath(source_path).encode('utf-8')).hexdigest()[:8]
+        debug_path = os.path.join(debug_dir, f'{filename_no_ext}_{path_hash}.png')
+        img.save(debug_path)
+    except Exception as e:
+        print_acc(f"Warning: failed to save decoded debug image for {source_path}: {e}")
+
+
 def standardize_images(images):
     """
     Standardize the given batch of images using the specified mean and std.
@@ -689,6 +704,7 @@ class ImageProcessingDTOMixin:
             if self.dataset_config.decode_images:
                 img = decode_image_simple(self.path, key=self.dataset_config.decode_key)
                 img = exif_transpose(img)
+                maybe_save_debug_decoded_image(img, self.path)
             else:
                 with Image.open(self.path) as raw_img:
                     img = exif_transpose(raw_img)

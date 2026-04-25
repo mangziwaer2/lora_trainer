@@ -135,6 +135,16 @@ class BaseSDTrainProcess(BaseTrainProcess):
         self._load_best_model_info()
         self.debug_first_batch_dir = os.environ.get("AITK_DEBUG_FIRST_BATCH_DIR", None)
         self._did_dump_first_batch_debug = False
+        do_profiler = self.get_conf('torch_profiler', False)
+        self.torch_profiler = None if not do_profiler else torch.profiler.profile(
+            activities=[
+                torch.profiler.ProfilerActivity.CPU,
+                torch.profiler.ProfilerActivity.CUDA,
+            ],
+        )
+        self.current_boundary_index = 0
+        self.steps_this_boundary = 0
+        self.num_consecutive_oom = 0
         self.optimizer: torch.optim.Optimizer = None
         self.lr_scheduler = None
         self.data_loader: Union[DataLoader, None] = None
@@ -314,18 +324,6 @@ class BaseSDTrainProcess(BaseTrainProcess):
             self._did_dump_first_batch_debug = True
         except Exception as e:
             print_acc(f"Failed to save first-batch debug artifacts: {e}")
-        
-        do_profiler = self.get_conf('torch_profiler', False)
-        self.torch_profiler = None if not do_profiler else torch.profiler.profile(
-            activities=[
-                torch.profiler.ProfilerActivity.CPU,
-                torch.profiler.ProfilerActivity.CUDA,
-            ],
-        )
-        
-        self.current_boundary_index = 0
-        self.steps_this_boundary = 0
-        self.num_consecutive_oom = 0
 
     def post_process_generate_image_config_list(self, generate_image_config_list: List[GenerateImageConfig]):
         # override in subclass
