@@ -43,6 +43,7 @@ DEFAULTS: dict[str, Any] = {
     "train_text_encoder": False,
     "low_vram": False,
     "dtype": "fp16",
+    "vae_dtype": "fp32",
     "save_dtype": "float16",
     "save_format": "safetensors",
     "dataset_cache_dir": None,
@@ -145,6 +146,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--low-vram", action="store_true", default=None, help="Enable low VRAM model mode.")
 
     parser.add_argument("--dtype", default=None, help="Training dtype, for example fp16 or bf16.")
+    parser.add_argument("--vae-dtype", default=None, help="VAE dtype for image encoding, for example fp32 or fp16.")
     parser.add_argument("--save-dtype", default=None, help="Save dtype, for example float16 or bf16.")
     parser.add_argument("--save-format", default=None, choices=["safetensors", "diffusers"], help="Output format.")
     parser.add_argument("--dataset-cache-dir", default=None, help="Optional writable cache directory for dataset metadata and disk caches.")
@@ -366,6 +368,7 @@ def build_config(settings: dict[str, Any], repo_root: Path) -> dict[str, Any]:
                         "qtype_te": "qfloat8",
                         "arch": "sdxl",
                         "low_vram": settings["low_vram"],
+                        "vae_dtype": settings["vae_dtype"],
                         "model_kwargs": {},
                     },
                     "sample": {

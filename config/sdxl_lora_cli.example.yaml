@@ -29,6 +29,7 @@ train_text_encoder: false
 low_vram: false
 
 dtype: fp16
+vae_dtype: fp32
 save_dtype: float16
 save_format: safetensors
 

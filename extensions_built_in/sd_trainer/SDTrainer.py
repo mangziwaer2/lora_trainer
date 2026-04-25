@@ -1199,6 +1199,41 @@ class SDTrainer(BaseSDTrainProcess):
             **kwargs
         )
     
+    def log_tensor_finite_stats(self, name: str, tensor: Optional[torch.Tensor]):
+        if tensor is None:
+            return
+        try:
+            detached = tensor.detach()
+            finite_mask = torch.isfinite(detached)
+            finite_count = int(finite_mask.sum().item())
+            total_count = detached.numel()
+            if finite_count == total_count:
+                finite_values = detached.float()
+                print_acc(
+                    f"{name}: finite shape={tuple(detached.shape)} "
+                    f"min={finite_values.min().item():.6g} "
+                    f"max={finite_values.max().item():.6g} "
+                    f"mean={finite_values.mean().item():.6g}"
+                )
+                return
+
+            nan_count = int(torch.isnan(detached).sum().item())
+            inf_count = int(torch.isinf(detached).sum().item())
+            msg = (
+                f"{name}: non-finite shape={tuple(detached.shape)} "
+                f"finite={finite_count}/{total_count} nan={nan_count} inf={inf_count}"
+            )
+            if finite_count > 0:
+                finite_values = detached[finite_mask].float()
+                msg += (
+                    f" finite_min={finite_values.min().item():.6g}"
+                    f" finite_max={finite_values.max().item():.6g}"
+                    f" finite_mean={finite_values.mean().item():.6g}"
+                )
+            print_acc(msg)
+        except Exception as e:
+            print_acc(f"{name}: failed to collect finite stats: {e}")
+
 
     def train_single_accumulation(self, batch: DataLoaderBatchDTO):
         with torch.no_grad():
@@ -1917,6 +1952,7 @@ class SDTrainer(BaseSDTrainProcess):
                             noise = next_sample_noise
                             timesteps = stepped_timesteps
                 # do a prior pred if we have an unconditional image, we will swap out the giadance later
+                noise_pred = None
                 if batch.unconditional_latents is not None or self.do_guided_loss:
                     # do guided loss
                     loss = self.get_guided_loss(
@@ -2011,9 +2047,16 @@ class SDTrainer(BaseSDTrainProcess):
                         loss.requires_grad_(True)
                         
                 # check if nan
-                if torch.isnan(loss):
-                    print_acc("loss is nan")
-                    loss = torch.zeros_like(loss).requires_grad_(True)
+                if not torch.isfinite(loss).all().item():
+                    print_acc("loss is not finite; aborting this run")
+                    self.log_tensor_finite_stats("imgs", imgs)
+                    self.log_tensor_finite_stats("latents", batch.latents)
+                    self.log_tensor_finite_stats("noise", noise)
+                    self.log_tensor_finite_stats("noisy_latents", noisy_latents)
+                    self.log_tensor_finite_stats("noise_pred", noise_pred)
+                    self.log_tensor_finite_stats("prior_pred", prior_pred)
+                    self.log_tensor_finite_stats("loss", loss)
+                    raise FloatingPointError("Non-finite loss detected during training")
 
                 with self.timer('backward'):
                     # todo we have multiplier seperated. works for now as res are not in same batch, but need to change
