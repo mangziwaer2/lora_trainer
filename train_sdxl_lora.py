@@ -60,6 +60,7 @@ DEFAULTS: dict[str, Any] = {
     "no_skip_first_sample": False,
     "config_path": None,
     "log": None,
+    "debug_first_batch_dir": None,
     "write_config_only": False,
 }
 
@@ -165,6 +166,7 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument("--config-path", default=None, help="Optional explicit generated AI Toolkit config path.")
     parser.add_argument("--log", default=None, help="Optional training log file path passed to run.py.")
+    parser.add_argument("--debug-first-batch-dir", default=None, help="Optional directory for first-batch/loss-input debug artifacts.")
     parser.add_argument("--write-config-only", action="store_true", default=None, help="Only write the config file and exit.")
     return parser.parse_args()
 
@@ -414,6 +416,11 @@ def main() -> int:
     args = parse_args()
     repo_root = Path(__file__).resolve().parent
     settings = merge_settings(args)
+    if settings.get("debug_first_batch_dir"):
+        debug_dir = Path(settings["debug_first_batch_dir"]).expanduser().resolve()
+        debug_dir.mkdir(parents=True, exist_ok=True)
+        os.environ["AITK_DEBUG_FIRST_BATCH_DIR"] = str(debug_dir)
+        print(f"First-batch debug artifacts enabled: {debug_dir}")
     config = build_config(settings, repo_root)
 
     if settings["config_path"]:

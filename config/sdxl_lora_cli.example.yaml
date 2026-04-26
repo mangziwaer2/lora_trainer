@@ -16,6 +16,8 @@ save_every: 1000
 max_step_saves_to_keep: 15
 save_best_model: true
 sample_every: 1000
+cache_latents: false
+cache_latents_to_disk: false
 
 rank: 32
 conv_rank: 16
@@ -28,9 +30,9 @@ cache_latents_to_disk: false
 train_text_encoder: false
 low_vram: false
 
-dtype: fp16
+dtype: bf16
 vae_dtype: fp32
-save_dtype: float16
+save_dtype: bf16   
 save_format: safetensors
 
 decode_images: true
