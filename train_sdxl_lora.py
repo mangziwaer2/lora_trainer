@@ -18,6 +18,7 @@ DEFAULTS: dict[str, Any] = {
     "performance_log_every": 0 if IS_KAGGLE else 10,
     "disable_progress_bar": IS_KAGGLE,
     "progress_bar_mininterval": 60.0 if IS_KAGGLE else 1.0,
+    "process_type": "auto",
     "steps": 3000,
     "batch_size": 1,
     "gradient_accumulation": 1,
@@ -47,6 +48,7 @@ DEFAULTS: dict[str, Any] = {
     "save_dtype": "float16",
     "save_format": "safetensors",
     "dataset_cache_dir": None,
+    "model_kwargs": {},
     "sample_prompts": [],
     "sample_prompts_file": None,
     "sample_neg": "",
@@ -88,6 +90,12 @@ def parse_args() -> argparse.Namespace:
         help="Enable or disable the tqdm training progress bar.",
     )
     parser.add_argument("--progress-bar-mininterval", type=float, default=None, help="Minimum seconds between tqdm refreshes.")
+    parser.add_argument(
+        "--process-type",
+        choices=["auto", "diffusion_trainer", "sd_trainer"],
+        default=None,
+        help="AI Toolkit process type. auto uses diffusion_trainer when available, otherwise sd_trainer.",
+    )
 
     parser.add_argument("--steps", type=int, default=None, help="Training steps.")
     parser.add_argument("--batch-size", type=int, default=None, help="Batch size.")
@@ -250,6 +258,26 @@ def load_sample_prompts(settings: dict[str, Any]) -> list[str]:
     return prompts
 
 
+def resolve_process_type(settings: dict[str, Any]) -> str:
+    configured_process_type = settings.get("process_type", "auto")
+    if configured_process_type != "auto":
+        return configured_process_type
+
+    try:
+        from toolkit.extension import get_all_extensions_process_dict
+
+        process_dict = get_all_extensions_process_dict()
+        if "diffusion_trainer" in process_dict:
+            return "diffusion_trainer"
+        if "sd_trainer" in process_dict:
+            return "sd_trainer"
+        available = ", ".join(sorted(process_dict.keys())) or "<none>"
+        raise ValueError(f"No supported training process type found. Available process types: {available}")
+    except Exception as exc:
+        print(f"Warning: failed to detect process types ({exc}); falling back to sd_trainer")
+        return "sd_trainer"
+
+
 def build_config(settings: dict[str, Any], repo_root: Path) -> dict[str, Any]:
     dataset_path = normalize_existing_path(settings["dataset"], "Dataset path")
     output_root = Path(settings["output"]).expanduser().resolve()
@@ -262,6 +290,8 @@ def build_config(settings: dict[str, Any], repo_root: Path) -> dict[str, Any]:
         dataset_cache_dir = output_root / settings["name"] / "dataset_cache"
     dataset_cache_dir.mkdir(parents=True, exist_ok=True)
     sample_prompts = load_sample_prompts(settings)
+    process_type = resolve_process_type(settings)
+    print(f"Using process type: {process_type}")
 
     disable_sampling = settings["disable_sampling"] or len(sample_prompts) == 0
     sample_items = [{"prompt": prompt} for prompt in sample_prompts]
@@ -272,7 +302,7 @@ def build_config(settings: dict[str, Any], repo_root: Path) -> dict[str, Any]:
             "name": settings["name"],
             "process": [
                 {
-                    "type": "diffusion_trainer",
+                    "type": process_type,
                     "training_folder": str(output_root),
                     "sqlite_db_path": str((repo_root / "aitk_db.db").resolve()),
                     "device": "cuda",
@@ -371,7 +401,7 @@ def build_config(settings: dict[str, Any], repo_root: Path) -> dict[str, Any]:
                         "arch": "sdxl",
                         "low_vram": settings["low_vram"],
                         "vae_dtype": settings["vae_dtype"],
-                        "model_kwargs": {},
+                        "model_kwargs": settings["model_kwargs"],
                     },
                     "sample": {
                         "sampler": "ddpm",

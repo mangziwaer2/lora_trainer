@@ -317,10 +317,21 @@ class StableDiffusion:
                     **load_args
                 )
             else:
+                single_file_kwargs = dict(self.model_config.model_kwargs)
+                if "config" not in single_file_kwargs:
+                    sdxl_diffusers_config_path = os.path.join(DIFFUSERS_CONFIGS_ROOT, "sdxl_base")
+                    if os.path.isdir(sdxl_diffusers_config_path):
+                        single_file_kwargs["config"] = sdxl_diffusers_config_path
+                if "original_config_file" not in single_file_kwargs:
+                    sdxl_base_config_path = os.path.join(ORIG_CONFIGS_ROOT, "sd_xl_base.yaml")
+                    if os.path.exists(sdxl_base_config_path):
+                        single_file_kwargs["original_config_file"] = sdxl_base_config_path
+                single_file_kwargs.setdefault("local_files_only", True)
                 pipe = pipln.from_single_file(
                     model_path,
                     device=self.device_torch,
                     torch_dtype=self.torch_dtype,
+                    **single_file_kwargs,
                 )
 
             if 'vae' in load_args and load_args['vae'] is not None:

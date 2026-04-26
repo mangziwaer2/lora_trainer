@@ -46,6 +46,22 @@ def get_all_extensions() -> List[Extension]:
             # except ImportError as e:
             #     print(f"Failed to import the {name} module. Error: {str(e)}")
 
+    # Some deployment/packaging paths fail to enumerate namespace-package
+    # directories with pkgutil, which leaves the process registry empty.
+    # Register the built-in trainer extension explicitly as a fallback.
+    known_uids = {extension.uid for extension in all_extension_classes}
+    if "sd_trainer" not in known_uids:
+        try:
+            module = importlib.import_module("extensions_built_in.sd_trainer")
+            extensions = getattr(module, "AI_TOOLKIT_EXTENSIONS", None)
+            if isinstance(extensions, list):
+                all_extension_classes.extend(
+                    extension for extension in extensions
+                    if extension.uid not in known_uids
+                )
+        except ImportError:
+            pass
+
     return all_extension_classes
 
 
@@ -53,5 +69,8 @@ def get_all_extensions_process_dict():
     all_extensions = get_all_extensions()
     process_dict = {}
     for extension in all_extensions:
-        process_dict[extension.uid] = extension.get_process()
+        try:
+            process_dict[extension.uid] = extension.get_process()
+        except Exception as e:
+            print(f"Warning: failed to load extension process {extension.uid}: {e}")
     return process_dict

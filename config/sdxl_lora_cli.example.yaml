@@ -7,17 +7,16 @@ output: /kaggle/working/ai-toolkit-output
 # dataset_cache_dir: /kaggle/working/ai-toolkit-output/kaggle_sdxl_lora/dataset_cache
 
 trigger_word: null
-steps: 5000
+steps: 20000
 batch_size: 2
 gradient_accumulation: 1
-lr: 0.00005
+lr: 0.0001
 optimizer: adamw8bit
 save_every: 1000
 max_step_saves_to_keep: 15
 save_best_model: true
 sample_every: 1000
 cache_latents: false
-cache_latents_to_disk: false
 
 rank: 32
 conv_rank: 16
@@ -41,14 +40,12 @@ decode_key: 123456789
 sample_prompts:
   # Diagnostic set: --m is LoRA strength. If --m 0 is normal but --m 1 is garbled,
   # the base model/sampler is fine and the LoRA is overtrained or trained on bad decoded data.
-  - 1girl, anime coloring,dress,sfw,posing,embarrassed,thighhighs, --m 0
-  - 1girl, anime coloring,dress,sfw,posing,embarrassed,thighhighs, --m 0.5
-  - 1girl, anime coloring,dress,sfw,posing,embarrassed,thighhighs, --m 1
+  - 1girl, anime coloring,dress,sfw,posing,embarrassed,thighhighs,
 sample_neg: ""
 sample_width: 1024
 sample_height: 1024
 sample_steps: 20
-guidance_scale: 2.0
+guidance_scale: 6.0
 seed: 42
 walk_seed: true
 disable_sampling: false
