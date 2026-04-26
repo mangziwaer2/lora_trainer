@@ -7,10 +7,10 @@ output: /kaggle/working/ai-toolkit-output
 # dataset_cache_dir: /kaggle/working/ai-toolkit-output/kaggle_sdxl_lora/dataset_cache
 
 trigger_word: null
-steps: 15000
+steps: 5000
 batch_size: 2
 gradient_accumulation: 1
-lr: 0.0001
+lr: 0.00005
 optimizer: adamw8bit
 save_every: 1000
 max_step_saves_to_keep: 15
@@ -37,8 +37,11 @@ decode_images: true
 decode_key: 123456789
 
 sample_prompts:
-  - 1girl, anime coloring,dress,sfw,posing,embarrassed,thighhighs,
-  - 1girl,anime coloring,maid,sfw,off shoulder,strapless,miniskirt,embarrassed,clothes,pull,loose socks,pose,dynamic emotion,
+  # Diagnostic set: --m is LoRA strength. If --m 0 is normal but --m 1 is garbled,
+  # the base model/sampler is fine and the LoRA is overtrained or trained on bad decoded data.
+  - 1girl, anime coloring,dress,sfw,posing,embarrassed,thighhighs, --m 0
+  - 1girl, anime coloring,dress,sfw,posing,embarrassed,thighhighs, --m 0.5
+  - 1girl, anime coloring,dress,sfw,posing,embarrassed,thighhighs, --m 1
 sample_neg: ""
 sample_width: 1024
 sample_height: 1024

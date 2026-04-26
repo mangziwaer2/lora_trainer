@@ -57,6 +57,8 @@ from toolkit.train_tools import get_torch_dtype, LearnableSNRGamma, apply_learna
 import gc
 
 from tqdm import tqdm
+from PIL import Image
+from PIL.ImageOps import exif_transpose
 
 from toolkit.config_modules import SaveConfig, LoggingConfig, SampleConfig, NetworkConfig, TrainConfig, ModelConfig, \
     GenerateImageConfig, EmbeddingConfig, DatasetConfig, preprocess_dataset_raw_config, AdapterConfig, GuidanceConfig, validate_configs, \
@@ -65,6 +67,7 @@ from toolkit.logging_aitk import create_logger
 from diffusers import FluxTransformer2DModel
 from toolkit.accelerator import get_accelerator, unwrap_model
 from toolkit.print import print_acc
+from toolkit.dataloader_mixins import decode_image_simple
 from accelerate import Accelerator
 import transformers
 import diffusers
@@ -317,6 +320,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 "cache_latents": bool(batch.dataset_config.cache_latents) if batch.dataset_config is not None else None,
                 "cache_latents_to_disk": bool(batch.dataset_config.cache_latents_to_disk) if batch.dataset_config is not None else None,
             }
+            debug_info["loss_input_audit"] = self.maybe_dump_loss_input_audit(batch=batch, imgs=imgs)
             with open(os.path.join(debug_dir, "first_batch_debug.json"), "w", encoding="utf-8") as f:
                 json.dump(debug_info, f, indent=2, ensure_ascii=False)
 
@@ -324,6 +328,128 @@ class BaseSDTrainProcess(BaseTrainProcess):
             self._did_dump_first_batch_debug = True
         except Exception as e:
             print_acc(f"Failed to save first-batch debug artifacts: {e}")
+
+    @staticmethod
+    def _loss_tensor_to_pil(tensor: torch.Tensor) -> Image.Image:
+        img_tensor = tensor.detach().float().cpu()
+        # Training image tensors are normally in [-1, 1]. Some specialized paths may already be [0, 1].
+        if img_tensor.min().item() < -0.05:
+            img_tensor = (img_tensor + 1.0) / 2.0
+        img_tensor = img_tensor.clamp(0.0, 1.0)
+        img_array = (img_tensor.permute(1, 2, 0).numpy() * 255.0).round().astype(np.uint8)
+        return Image.fromarray(img_array)
+
+    @staticmethod
+    def _apply_file_item_geometry(img: Image.Image, file_item: FileItemDTO) -> Image.Image:
+        img = img.convert('RGB')
+        if file_item.flip_x:
+            img = img.transpose(Image.FLIP_LEFT_RIGHT)
+        if file_item.flip_y:
+            img = img.transpose(Image.FLIP_TOP_BOTTOM)
+
+        if file_item.dataset_config.buckets:
+            img = img.resize((file_item.scale_to_width, file_item.scale_to_height), Image.BICUBIC)
+            img = img.crop((
+                file_item.crop_x,
+                file_item.crop_y,
+                file_item.crop_x + file_item.crop_width,
+                file_item.crop_y + file_item.crop_height,
+            ))
+        else:
+            img = img.resize(
+                (
+                    int(img.size[0] * file_item.dataset_config.scale),
+                    int(img.size[1] * file_item.dataset_config.scale),
+                ),
+                Image.BICUBIC,
+            )
+            min_img_size = min(img.size)
+            img = img.crop((
+                int((img.width - min_img_size) / 2),
+                int((img.height - min_img_size) / 2),
+                int((img.width + min_img_size) / 2),
+                int((img.height + min_img_size) / 2),
+            ))
+            img = img.resize((file_item.dataset_config.resolution, file_item.dataset_config.resolution), Image.BICUBIC)
+        return img
+
+    @staticmethod
+    def _image_abs_diff_stats(a: Image.Image, b: Image.Image) -> dict:
+        arr_a = np.array(a.convert('RGB')).astype(np.int16)
+        arr_b = np.array(b.convert('RGB')).astype(np.int16)
+        if arr_a.shape != arr_b.shape:
+            return {
+                "shape_matches": False,
+                "a_shape": list(arr_a.shape),
+                "b_shape": list(arr_b.shape),
+            }
+        diff = np.abs(arr_a - arr_b)
+        return {
+            "shape_matches": True,
+            "exact_match": bool(np.array_equal(arr_a, arr_b)),
+            "max_abs_diff": int(diff.max()),
+            "mean_abs_diff": float(diff.mean()),
+        }
+
+    def maybe_dump_loss_input_audit(
+            self,
+            batch: 'DataLoaderBatchDTO',
+            imgs: Optional[torch.Tensor],
+    ):
+        if imgs is None or not self.debug_first_batch_dir or not self.accelerator.is_local_main_process:
+            return []
+
+        audit_dir = os.path.join(os.path.abspath(os.path.expanduser(self.debug_first_batch_dir)), "loss_input_audit")
+        os.makedirs(audit_dir, exist_ok=True)
+        audit_items = []
+        num_items = min(4, imgs.shape[0], len(batch.file_items))
+
+        for idx in range(num_items):
+            file_item: FileItemDTO = batch.file_items[idx]
+            item_prefix = f"{idx:02d}"
+            loss_input = self._loss_tensor_to_pil(imgs[idx])
+            loss_input_path = os.path.join(audit_dir, f"{item_prefix}_actual_loss_input.png")
+            loss_input.save(loss_input_path)
+
+            item_info = {
+                "path": file_item.path,
+                "actual_loss_input": loss_input_path,
+                "decode_images": bool(file_item.dataset_config.decode_images),
+                "decode_key": int(file_item.dataset_config.decode_key),
+                "scale_to_width": file_item.scale_to_width,
+                "scale_to_height": file_item.scale_to_height,
+                "crop_x": file_item.crop_x,
+                "crop_y": file_item.crop_y,
+                "crop_width": file_item.crop_width,
+                "crop_height": file_item.crop_height,
+            }
+
+            encoded_source = exif_transpose(Image.open(file_item.path)).convert('RGB')
+            encoded_processed = self._apply_file_item_geometry(encoded_source, file_item)
+            encoded_processed_path = os.path.join(audit_dir, f"{item_prefix}_encoded_as_input_reference.png")
+            encoded_processed.save(encoded_processed_path)
+            item_info["encoded_as_input_reference"] = encoded_processed_path
+            item_info["diff_actual_vs_encoded_reference"] = self._image_abs_diff_stats(loss_input, encoded_processed)
+
+            if file_item.dataset_config.decode_images:
+                decoded_source = exif_transpose(decode_image_simple(file_item.path, key=file_item.dataset_config.decode_key))
+                decoded_source = decoded_source.convert('RGB')
+                decoded_source_path = os.path.join(audit_dir, f"{item_prefix}_decoded_source.png")
+                decoded_source.save(decoded_source_path)
+                decoded_processed = self._apply_file_item_geometry(decoded_source, file_item)
+                decoded_processed_path = os.path.join(audit_dir, f"{item_prefix}_decoded_processed_expected.png")
+                decoded_processed.save(decoded_processed_path)
+                item_info["decoded_source"] = decoded_source_path
+                item_info["decoded_processed_expected"] = decoded_processed_path
+                item_info["diff_actual_vs_decoded_expected"] = self._image_abs_diff_stats(loss_input, decoded_processed)
+
+            audit_items.append(item_info)
+
+        audit_path = os.path.join(audit_dir, "loss_input_audit.json")
+        with open(audit_path, "w", encoding="utf-8") as f:
+            json.dump(audit_items, f, indent=2, ensure_ascii=False)
+        print_acc(f"Saved loss-input audit artifacts to {audit_dir}")
+        return audit_items
 
     def post_process_generate_image_config_list(self, generate_image_config_list: List[GenerateImageConfig]):
         # override in subclass
