@@ -17,6 +17,7 @@ albumentations==1.4.15
 albucore==0.0.16
 pydantic
 omegaconf
+voluptuous
 k-diffusion
 open_clip_torch
 timm

@@ -6,11 +6,11 @@ name: anima_lora
 # 2. model
 # 3. qwen3
 # 4. vae
-dataset: ../datasets/anima_encoded
-model: /path/to/anima_base_or_comfyui_unet.safetensors
-qwen3: /path/to/qwen_3_06b_base.safetensors
-vae: /path/to/qwen_image_vae.safetensors
-output: ../outputs
+dataset: /kaggle/input/datasets/mangziwaer2/loradataset/lora_enc
+model: /kaggle/input/models/mangziwaer2/abase/pytorch/default/1/BASBetterAnimeStylePlusAnima_baseV10.safetensors
+qwen3: /kaggle/input/models/qwen-lm/qwen-3/transformers/0.6b-base/1/model.safetensors
+vae: /kaggle/input/models/mangziwaer2/abase/pytorch/default/1/qwen_image_vae.safetensors
+output: /kaggle/working/output
 
 # Optional if your Anima base checkpoint does not already contain the LLM adapter.
 # llm_adapter_path: /path/to/llm_adapter.safetensors
@@ -28,11 +28,11 @@ batch_size: 1
 gradient_accumulation: 4
 lr: 0.0001
 optimizer: AdamW8bit
-save_every: 500
+save_every: 100
 
 # Anima still uses dataset repeats, unlike the SDXL wrapper in this repo.
 # This changes epoch length, not effective batch size.
-num_repeats: 2
+num_repeats: 1
 
 # LoRA rank. Alias of network_dim.
 rank: 16

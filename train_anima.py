@@ -16,6 +16,7 @@ from PIL import Image
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 LOSSY_EXTENSIONS = {".jpg", ".jpeg", ".webp"}
+IS_KAGGLE = bool(os.environ.get("KAGGLE_KERNEL_RUN_TYPE")) or Path("/kaggle").exists()
 REPO_ROOT = Path(__file__).resolve().parent
 DEFAULT_CONFIG_PATH = REPO_ROOT / "config" / "anima_lora_cli.example.yaml"
 DEFAULT_SD_SCRIPTS_CANDIDATES = [
@@ -34,6 +35,7 @@ DEFAULTS: dict[str, Any] = {
     "keep_decoded_dataset": True,
     "sd_scripts_python": None,
     "num_cpu_threads_per_process": 1,
+    "num_processes": 1 if IS_KAGGLE else None,
     "batch_size": 1,
     "gradient_accumulation_steps": 1,
     "num_repeats": 1,
@@ -92,6 +94,12 @@ def parse_args() -> argparse.Namespace:
         help="Optional path to a local sd-scripts checkout. If omitted, this script auto-detects vendor/sd-scripts.",
     )
     parser.add_argument("--sd-scripts-python", default=None, help="Python executable for the sd-scripts environment.")
+    parser.add_argument(
+        "--num-processes",
+        type=int,
+        default=None,
+        help="Process count passed to accelerate launch. Defaults to 1 on Kaggle to avoid accidental multi-GPU startup.",
+    )
     parser.add_argument("--anima-model", "--model", dest="anima_model", default=None, help="Path to the Anima DiT .safetensors file.")
     parser.add_argument("--qwen3", default=None, help="Path to the Qwen3-0.6B directory or .safetensors file.")
     parser.add_argument("--vae", default=None, help="Path to the Qwen-Image VAE file.")
@@ -301,6 +309,8 @@ def merge_settings(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError("max_train_steps must be >= 1 when provided")
     if settings["save_every_n_steps"] is not None and settings["save_every_n_steps"] < 1:
         raise ValueError("save_every_n_steps must be >= 1 when provided")
+    if settings["num_processes"] is not None and settings["num_processes"] < 1:
+        raise ValueError("num_processes must be >= 1 when provided")
     if settings["num_cpu_threads_per_process"] < 1:
         raise ValueError("num_cpu_threads_per_process must be >= 1")
     if not isinstance(settings["extra_args"], list):
@@ -494,9 +504,14 @@ def build_command(settings: dict[str, Any], dataset_config_path: Path) -> tuple[
         python_executable,
         "-m",
         "accelerate.commands.launch",
-        "--num_cpu_threads_per_process",
-        str(int(settings["num_cpu_threads_per_process"])),
-        str(script_path),
+    ]
+    if settings["num_processes"] is not None:
+        command.extend(["--num_processes", str(int(settings["num_processes"]))])
+    command.extend(
+        [
+            "--num_cpu_threads_per_process",
+            str(int(settings["num_cpu_threads_per_process"])),
+            str(script_path),
         "--pretrained_model_name_or_path",
         normalize_existing_path(
             settings["anima_model"],
@@ -545,7 +560,8 @@ def build_command(settings: dict[str, Any], dataset_config_path: Path) -> tuple[
         str(int(settings["seed"])),
         "--vae_chunk_size",
         str(int(settings["vae_chunk_size"])),
-    ]
+        ]
+    )
 
     if settings["network_alpha"] is not None:
         command.extend(["--network_alpha", str(int(settings["network_alpha"]))])

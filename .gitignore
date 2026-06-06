@@ -173,6 +173,8 @@ cython_debug/
 !/config/_PUT_YOUR_CONFIGS_HERE).txt
 /output/*
 !/output/.gitkeep
+/outputs/*
+!/outputs/.gitkeep
 /extensions/*
 !/extensions/example
 /temp
@@ -191,3 +193,8 @@ aitk_db.db
 /data
 ui/dist/
 ui/tailwind-test.css
+vendor/sd-scripts/.ai/
+vendor/sd-scripts/.github/
+vendor/sd-scripts/docs/
+vendor/sd-scripts/tests/
+vendor/sd-scripts/__pycache__/

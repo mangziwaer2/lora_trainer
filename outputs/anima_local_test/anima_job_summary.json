@@ -1,7 +1,0 @@
-{
-  "name": "anima_local_test",
-  "dataset_root_used": "E:\\project\\loraTrainer\\compressed\\ai-toolkit\\outputs\\anima_local_test\\decoded_dataset",
-  "dataset_config_path": "E:\\project\\loraTrainer\\compressed\\ai-toolkit\\outputs\\anima_local_test\\anima_dataset_config.toml",
-  "command_path": "E:\\project\\loraTrainer\\compressed\\ai-toolkit\\outputs\\anima_local_test\\anima_launch_command.json",
-  "decode_images": true
-}
