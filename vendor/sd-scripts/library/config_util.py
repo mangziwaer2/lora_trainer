@@ -55,6 +55,8 @@ def add_config_arguments(parser: argparse.ArgumentParser):
 class BaseSubsetParams:
     image_dir: Optional[str] = None
     num_repeats: int = 1
+    decode_images: bool = False
+    decode_key: int = 123456789
     shuffle_caption: bool = False
     caption_separator: str = (",",)
     keep_tokens: int = 0
@@ -183,6 +185,8 @@ class ConfigSanitizer:
 
     # subset schema
     SUBSET_ASCENDABLE_SCHEMA = {
+        "decode_images": bool,
+        "decode_key": int,
         "color_aug": bool,
         "face_crop_aug_range": functools.partial(__validate_and_convert_twodim.__func__, float),
         "flip_aug": bool,

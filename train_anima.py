@@ -2,7 +2,6 @@
 import argparse
 import json
 import os
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -32,7 +31,7 @@ DEFAULTS: dict[str, Any] = {
     "allow_lossy_extensions": False,
     "decoded_dataset_dir": None,
     "write_config_only": False,
-    "keep_decoded_dataset": True,
+    "keep_decoded_dataset": False,
     "sd_scripts_python": None,
     "num_cpu_threads_per_process": 1,
     "num_processes": 1 if IS_KAGGLE else None,
@@ -119,12 +118,16 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Allow JPG/JPEG/WebP input files when decoding encoded datasets.",
     )
-    parser.add_argument("--decoded-dataset-dir", default=None, help="Optional explicit decoded dataset output directory.")
+    parser.add_argument(
+        "--decoded-dataset-dir",
+        default=None,
+        help="Deprecated and ignored. Anima now decodes encoded images on the fly without writing a decoded dataset to disk.",
+    )
     parser.add_argument(
         "--keep-decoded-dataset",
         action=argparse.BooleanOptionalAction,
         default=None,
-        help="Keep the decoded dataset on disk after the run.",
+        help="Deprecated and ignored. Anima now decodes encoded images on the fly without writing a decoded dataset to disk.",
     )
     parser.add_argument("--num-cpu-threads-per-process", type=int, default=None, help="accelerate launch CPU thread count.")
     parser.add_argument("--batch-size", type=int, default=None, help="Per-step batch size.")
@@ -384,62 +387,6 @@ def find_dataset_image_dirs(dataset_root: Path) -> list[Path]:
     return image_dirs
 
 
-def decode_dataset(settings: dict[str, Any], job_root: Path) -> tuple[list[Path], Path]:
-    config_dir = get_base_dir_for_setting(settings, "dataset")
-    source_root = Path(normalize_existing_path(settings["dataset"], "Dataset path", base_dir=config_dir))
-    target_root = (
-        resolve_path(settings["decoded_dataset_dir"], base_dir=get_base_dir_for_setting(settings, "decoded_dataset_dir"))
-        if settings["decoded_dataset_dir"]
-        else job_root / "decoded_dataset"
-    )
-    target_root.mkdir(parents=True, exist_ok=True)
-
-    caption_ext = str(settings["caption_ext"]).lstrip(".")
-    decode_key = int(settings["decode_key"])
-    allow_lossy = bool(settings["allow_lossy_extensions"])
-
-    image_dirs = find_dataset_image_dirs(source_root)
-    decoded_dirs: list[Path] = []
-    seen_outputs: set[Path] = set()
-
-    for image_dir in image_dirs:
-        relative_dir = image_dir.relative_to(source_root)
-        decoded_dir = target_root / relative_dir
-        decoded_dir.mkdir(parents=True, exist_ok=True)
-        decoded_dirs.append(decoded_dir)
-
-        for image_path in sorted(image_dir.iterdir()):
-            if not image_path.is_file() or image_path.suffix.lower() not in IMAGE_EXTENSIONS:
-                continue
-
-            if image_path.suffix.lower() in LOSSY_EXTENSIONS and not allow_lossy:
-                raise ValueError(
-                    f"Encoded dataset contains lossy file {image_path}. Use PNG for XOR-encoded images or pass allow_lossy_extensions=true."
-                )
-
-            output_path = decoded_dir / f"{image_path.stem}.png"
-            if output_path in seen_outputs:
-                raise ValueError(f"Duplicate decoded output path detected: {output_path}")
-            seen_outputs.add(output_path)
-
-            decoded = decode_image_simple(image_path, key=decode_key)
-            decoded.save(output_path)
-
-            caption_path = image_path.with_suffix(f".{caption_ext}")
-            if caption_path.exists():
-                shutil.copy2(caption_path, decoded_dir / caption_path.name)
-
-    manifest = {
-        "source_dataset": str(source_root),
-        "decoded_dataset": str(target_root),
-        "decode_images": True,
-        "decode_key": decode_key,
-        "subset_dirs": [str(path) for path in decoded_dirs],
-    }
-    (job_root / "decoded_dataset_manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
-    return decoded_dirs, target_root
-
-
 def collect_plain_dataset(settings: dict[str, Any]) -> tuple[list[Path], Path]:
     source_root = Path(
         normalize_existing_path(
@@ -448,7 +395,20 @@ def collect_plain_dataset(settings: dict[str, Any]) -> tuple[list[Path], Path]:
             base_dir=get_base_dir_for_setting(settings, "dataset"),
         )
     )
-    return find_dataset_image_dirs(source_root), source_root
+    image_dirs = find_dataset_image_dirs(source_root)
+
+    if settings["decode_images"]:
+        allow_lossy = bool(settings["allow_lossy_extensions"])
+        for image_dir in image_dirs:
+            for image_path in sorted(image_dir.iterdir()):
+                if not image_path.is_file() or image_path.suffix.lower() not in IMAGE_EXTENSIONS:
+                    continue
+                if image_path.suffix.lower() in LOSSY_EXTENSIONS and not allow_lossy:
+                    raise ValueError(
+                        f"Encoded dataset contains lossy file {image_path}. Use PNG for XOR-encoded images or pass allow_lossy_extensions=true."
+                    )
+
+    return image_dirs, source_root
 
 
 def build_dataset_config(settings: dict[str, Any], image_dirs: list[Path], output_path: Path) -> Path:
@@ -471,6 +431,8 @@ def build_dataset_config(settings: dict[str, Any], image_dirs: list[Path], outpu
                         "image_dir": str(path),
                         "num_repeats": int(settings["num_repeats"]),
                         "flip_aug": bool(settings["flip_aug"]),
+                        "decode_images": bool(settings["decode_images"]),
+                        "decode_key": int(settings["decode_key"]),
                     }
                     for path in image_dirs
                 ],
@@ -635,10 +597,7 @@ def main() -> int:
     job_root = output_root / settings["name"]
     job_root.mkdir(parents=True, exist_ok=True)
 
-    if settings["decode_images"]:
-        image_dirs, decoded_root = decode_dataset(settings, job_root)
-    else:
-        image_dirs, decoded_root = collect_plain_dataset(settings)
+    image_dirs, dataset_root = collect_plain_dataset(settings)
 
     dataset_config_path = build_dataset_config(settings, image_dirs, job_root / "anima_dataset_config.toml")
     command, workdir = build_command(settings, dataset_config_path)
@@ -652,11 +611,13 @@ def main() -> int:
 
     summary = {
         "name": settings["name"],
-        "dataset_root_used": str(decoded_root),
+        "dataset_root_used": str(dataset_root),
         "dataset_config_path": str(dataset_config_path),
         "command_path": str(command_path),
         "sd_scripts_root": str(workdir),
         "decode_images": bool(settings["decode_images"]),
+        "decode_mode": "stream" if settings["decode_images"] else "plain",
+        "decoded_dataset_written_to_disk": False,
         "batch_size": int(settings["batch_size"]),
         "gradient_accumulation_steps": int(settings["gradient_accumulation_steps"]),
         "effective_batch_size_single_process": int(settings["batch_size"]) * int(settings["gradient_accumulation_steps"]),

@@ -180,7 +180,15 @@ def split_train_val(
 
 class ImageInfo:
     def __init__(
-        self, image_key: str, num_repeats: int, caption: str, is_reg: bool, absolute_path: str, caption_dropout_rate: float = 0.0
+        self,
+        image_key: str,
+        num_repeats: int,
+        caption: str,
+        is_reg: bool,
+        absolute_path: str,
+        caption_dropout_rate: float = 0.0,
+        decode_images: bool = False,
+        decode_key: int = 123456789,
     ) -> None:
         self.image_key: str = image_key
         self.num_repeats: int = num_repeats
@@ -188,6 +196,8 @@ class ImageInfo:
         self.is_reg: bool = is_reg
         self.absolute_path: str = absolute_path
         self.caption_dropout_rate: float = caption_dropout_rate
+        self.decode_images: bool = decode_images
+        self.decode_key: int = decode_key
         self.image_size: Tuple[int, int] = None
         self.resized_size: Tuple[int, int] = None
         self.bucket_reso: Tuple[int, int] = None
@@ -211,6 +221,15 @@ class ImageInfo:
 
         self.alpha_mask: Optional[torch.Tensor] = None  # alpha mask can be flipped in runtime
         self.resize_interpolation: Optional[str] = None
+
+
+def decode_image_simple(enc_path: str, key: int) -> Image.Image:
+    encoded_img = Image.open(enc_path).convert("RGB")
+    encoded_array = np.array(encoded_img)
+    np.random.seed(key)
+    random_mask = np.random.randint(0, 256, encoded_array.shape, dtype=np.uint8)
+    decoded = np.bitwise_xor(encoded_array, random_mask)
+    return Image.fromarray(decoded.astype(np.uint8))
 
 
 class BucketManager:
@@ -414,6 +433,8 @@ class BaseSubset:
         self,
         image_dir: Optional[str],
         alpha_mask: Optional[bool],
+        decode_images: bool,
+        decode_key: int,
         num_repeats: int,
         shuffle_caption: bool,
         caption_separator: str,
@@ -439,6 +460,8 @@ class BaseSubset:
     ) -> None:
         self.image_dir = image_dir
         self.alpha_mask = alpha_mask if alpha_mask is not None else False
+        self.decode_images = decode_images
+        self.decode_key = int(decode_key)
         self.num_repeats = num_repeats
         self.shuffle_caption = shuffle_caption
         self.caption_separator = caption_separator
@@ -478,6 +501,8 @@ class DreamBoothSubset(BaseSubset):
         caption_extension: str,
         cache_info: bool,
         alpha_mask: bool,
+        decode_images,
+        decode_key,
         num_repeats,
         shuffle_caption,
         caption_separator: str,
@@ -506,6 +531,8 @@ class DreamBoothSubset(BaseSubset):
         super().__init__(
             image_dir,
             alpha_mask,
+            decode_images,
+            decode_key,
             num_repeats,
             shuffle_caption,
             caption_separator,
@@ -549,6 +576,8 @@ class FineTuningSubset(BaseSubset):
         image_dir,
         metadata_file: str,
         alpha_mask: bool,
+        decode_images,
+        decode_key,
         num_repeats,
         shuffle_caption,
         caption_separator,
@@ -577,6 +606,8 @@ class FineTuningSubset(BaseSubset):
         super().__init__(
             image_dir,
             alpha_mask,
+            decode_images,
+            decode_key,
             num_repeats,
             shuffle_caption,
             caption_separator,
@@ -616,6 +647,8 @@ class ControlNetSubset(BaseSubset):
         conditioning_data_dir: str,
         caption_extension: str,
         cache_info: bool,
+        decode_images,
+        decode_key,
         num_repeats,
         shuffle_caption,
         caption_separator,
@@ -644,6 +677,8 @@ class ControlNetSubset(BaseSubset):
         super().__init__(
             image_dir,
             False,  # alpha_mask
+            decode_images,
+            decode_key,
             num_repeats,
             shuffle_caption,
             caption_separator,
@@ -1499,7 +1534,7 @@ class BaseDataset(torch.utils.data.Dataset):
         return image_size
 
     def load_image_with_face_info(self, subset: BaseSubset, image_path: str, alpha_mask=False):
-        img = load_image(image_path, alpha_mask)
+        img = load_image(image_path, alpha_mask, subset.decode_images, subset.decode_key)
 
         face_cx = face_cy = face_w = face_h = 0
         if subset.face_crop_aug_range is not None:
@@ -1877,7 +1912,11 @@ class BaseDataset(torch.utils.data.Dataset):
             caption = image_info.caption  # TODO cache some patterns of dropping, shuffling, etc.
 
             if self.caching_mode == "latents":
-                image = load_image(image_info.absolute_path)
+                image = load_image(
+                    image_info.absolute_path,
+                    decode_images=image_info.decode_images,
+                    decode_key=image_info.decode_key,
+                )
             else:
                 image = None
 
@@ -2213,7 +2252,16 @@ class DreamBoothDataset(BaseDataset):
                 num_train_images += num_repeats * len(img_paths)
 
             for img_path, caption, size in zip(img_paths, captions, sizes):
-                info = ImageInfo(img_path, num_repeats, caption, subset.is_reg, img_path, subset.caption_dropout_rate)
+                info = ImageInfo(
+                    img_path,
+                    num_repeats,
+                    caption,
+                    subset.is_reg,
+                    img_path,
+                    subset.caption_dropout_rate,
+                    decode_images=subset.decode_images,
+                    decode_key=subset.decode_key,
+                )
                 info.resize_interpolation = (
                     subset.resize_interpolation if subset.resize_interpolation is not None else self.resize_interpolation
                 )
@@ -2432,7 +2480,16 @@ class FineTuningDataset(BaseDataset):
                 if caption is None:
                     caption = ""
 
-                image_info = ImageInfo(image_key, subset.num_repeats, caption, False, abs_path, subset.caption_dropout_rate)
+                image_info = ImageInfo(
+                    image_key,
+                    subset.num_repeats,
+                    caption,
+                    False,
+                    abs_path,
+                    subset.caption_dropout_rate,
+                    decode_images=subset.decode_images,
+                    decode_key=subset.decode_key,
+                )
                 image_info.resize_interpolation = (
                     subset.resize_interpolation if subset.resize_interpolation is not None else self.resize_interpolation
                 )
@@ -3058,17 +3115,31 @@ def load_arbitrary_dataset(args, tokenizer=None) -> MinimalDataset:
     return train_dataset_group
 
 
-def load_image(image_path, alpha=False):
+def load_image(image_path, alpha=False, decode_images: bool = False, decode_key: int = 123456789):
     try:
-        with Image.open(image_path) as image:
-            if alpha:
-                if not image.mode == "RGBA":
-                    image = image.convert("RGBA")
-            else:
-                if not image.mode == "RGB":
-                    image = image.convert("RGB")
-            img = np.array(image, np.uint8)
-            return img
+        if decode_images:
+            image = decode_image_simple(image_path, decode_key)
+            try:
+                if alpha:
+                    if image.mode != "RGBA":
+                        image = image.convert("RGBA")
+                else:
+                    if image.mode != "RGB":
+                        image = image.convert("RGB")
+                img = np.array(image, np.uint8)
+                return img
+            finally:
+                image.close()
+        else:
+            with Image.open(image_path) as image:
+                if alpha:
+                    if image.mode != "RGBA":
+                        image = image.convert("RGBA")
+                else:
+                    if image.mode != "RGB":
+                        image = image.convert("RGB")
+                img = np.array(image, np.uint8)
+                return img
     except (IOError, OSError) as e:
         logger.error(f"Error loading file: {image_path}")
         raise e
@@ -3125,7 +3196,11 @@ def load_images_and_masks_for_caching(
     original_sizes: List[Tuple[int, int]] = []
     crop_ltrbs: List[Tuple[int, int, int, int]] = []
     for info in image_infos:
-        image = load_image(info.absolute_path, use_alpha_mask) if info.image is None else np.array(info.image, np.uint8)
+        image = (
+            load_image(info.absolute_path, use_alpha_mask, info.decode_images, info.decode_key)
+            if info.image is None
+            else np.array(info.image, np.uint8)
+        )
         # TODO 画像のメタデータが壊れていて、メタデータから割り当てたbucketと実際の画像サイズが一致しない場合があるのでチェック追加要
         image, original_size, crop_ltrb = trim_and_resize_if_required(
             random_crop, image, info.bucket_reso, info.resized_size, resize_interpolation=info.resize_interpolation
@@ -3168,7 +3243,11 @@ def cache_batch_latents(
     images = []
     alpha_masks: List[np.ndarray] = []
     for info in image_infos:
-        image = load_image(info.absolute_path, use_alpha_mask) if info.image is None else np.array(info.image, np.uint8)
+        image = (
+            load_image(info.absolute_path, use_alpha_mask, info.decode_images, info.decode_key)
+            if info.image is None
+            else np.array(info.image, np.uint8)
+        )
         # TODO 画像のメタデータが壊れていて、メタデータから割り当てたbucketと実際の画像サイズが一致しない場合があるのでチェック追加要
         image, original_size, crop_ltrb = trim_and_resize_if_required(
             random_crop, image, info.bucket_reso, info.resized_size, resize_interpolation=info.resize_interpolation

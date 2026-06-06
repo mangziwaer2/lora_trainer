@@ -83,6 +83,5 @@ discrete_flow_shift: 1.0
 #   - "1000"
 
 # Optional outputs/debug.
-# decoded_dataset_dir: ../outputs/anima_lora/decoded_dataset
 # command_path: ../outputs/anima_lora/anima_launch_command.json
 # write_config_only: true
