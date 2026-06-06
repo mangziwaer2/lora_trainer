@@ -21,19 +21,21 @@ output: ../outputs
 # sd_scripts_python: ../.venv/Scripts/python.exe
 
 # Same style as SDXL config where possible.
-steps: 20000
+# For cloud 4090, prefer controlling total training by steps.
+# Do not set both steps and max_train_epochs unless you intentionally want step-based control.
+steps: 4000
 batch_size: 1
 gradient_accumulation: 4
 lr: 0.0001
 optimizer: AdamW8bit
-save_every: 1000
+save_every: 500
 
 # Anima still uses dataset repeats, unlike the SDXL wrapper in this repo.
 # This changes epoch length, not effective batch size.
-num_repeats: 1
+num_repeats: 2
 
 # LoRA rank. Alias of network_dim.
-rank: 8
+rank: 16
 
 # Anima-specific training settings that usually do not need frequent changes.
 resolution: 1024
@@ -45,7 +47,7 @@ allow_lossy_extensions: false
 enable_bucket: true
 bucket_reso_steps: 64
 min_bucket_reso: 512
-max_bucket_reso: 1536
+max_bucket_reso: 1664
 bucket_no_upscale: false
 flip_aug: false
 shuffle_caption: false
@@ -65,15 +67,12 @@ lr_scheduler: constant
 timestep_sampling: sigmoid
 discrete_flow_shift: 1.0
 
-# If both are set, sd-scripts uses max_train_steps directly.
-# max_train_epochs is kept mainly for compatibility and long-run configs.
-max_train_epochs: 4000
-
-# When save_every is set above, this epoch-based save interval is ignored by this wrapper.
-save_every_n_epochs: 100
+# Optional epoch-based control. Leave commented when using steps.
+# max_train_epochs: 20
+# save_every_n_epochs: 1
 
 # Optional tuning knobs.
-# network_alpha: 8
+# network_alpha: 16
 # vae_chunk_size: 64
 # vae_disable_cache: true
 # t5_tokenizer_path: ../vendor/sd-scripts/configs/t5_old
@@ -81,7 +80,7 @@ save_every_n_epochs: 100
 # Extra raw arguments appended to anima_train_network.py if needed.
 # extra_args:
 #   - --sample_every_n_steps
-#   - "500"
+#   - "1000"
 
 # Optional outputs/debug.
 # decoded_dataset_dir: ../outputs/anima_lora/decoded_dataset

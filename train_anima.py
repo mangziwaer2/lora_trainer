@@ -54,7 +54,7 @@ DEFAULTS: dict[str, Any] = {
     "lr_scheduler": "constant",
     "timestep_sampling": "sigmoid",
     "discrete_flow_shift": 1.0,
-    "max_train_epochs": 10,
+    "max_train_epochs": None,
     "max_train_steps": None,
     "save_every_n_epochs": 1,
     "save_every_n_steps": None,
@@ -293,7 +293,9 @@ def merge_settings(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError("Bucket resolution range is invalid")
     if settings["network_dim"] < 1:
         raise ValueError("network_dim must be >= 1")
-    if settings["max_train_epochs"] < 1:
+    if settings["max_train_epochs"] is None and settings["max_train_steps"] is None:
+        raise ValueError("One of max_train_steps/steps or max_train_epochs must be provided")
+    if settings["max_train_epochs"] is not None and settings["max_train_epochs"] < 1:
         raise ValueError("max_train_epochs must be >= 1")
     if settings["max_train_steps"] is not None and settings["max_train_steps"] < 1:
         raise ValueError("max_train_steps must be >= 1 when provided")
@@ -537,8 +539,6 @@ def build_command(settings: dict[str, Any], dataset_config_path: Path) -> tuple[
         settings["timestep_sampling"],
         "--discrete_flow_shift",
         str(settings["discrete_flow_shift"]),
-        "--max_train_epochs",
-        str(int(settings["max_train_epochs"])),
         "--mixed_precision",
         settings["mixed_precision"],
         "--seed",
@@ -551,9 +551,11 @@ def build_command(settings: dict[str, Any], dataset_config_path: Path) -> tuple[
         command.extend(["--network_alpha", str(int(settings["network_alpha"]))])
     if settings["max_train_steps"] is not None:
         command.extend(["--max_train_steps", str(int(settings["max_train_steps"]))])
+    elif settings["max_train_epochs"] is not None:
+        command.extend(["--max_train_epochs", str(int(settings["max_train_epochs"]))])
     if settings["save_every_n_steps"] is not None:
         command.extend(["--save_every_n_steps", str(int(settings["save_every_n_steps"]))])
-    else:
+    elif settings["max_train_epochs"] is not None and settings["save_every_n_epochs"] is not None:
         command.extend(["--save_every_n_epochs", str(int(settings["save_every_n_epochs"]))])
     if settings["llm_adapter_path"] is not None:
         command.extend(

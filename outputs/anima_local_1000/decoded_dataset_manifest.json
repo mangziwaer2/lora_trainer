@@ -1,0 +1,9 @@
+{
+  "source_dataset": "E:\\IDrawing\\lora_enc",
+  "decoded_dataset": "E:\\project\\loraTrainer\\compressed\\ai-toolkit\\outputs\\anima_local_1000\\decoded_dataset",
+  "decode_images": true,
+  "decode_key": 123456789,
+  "subset_dirs": [
+    "E:\\project\\loraTrainer\\compressed\\ai-toolkit\\outputs\\anima_local_1000\\decoded_dataset"
+  ]
+}
