@@ -1,0 +1,112 @@
+job: extension
+config:
+  name: sdxl_local_test
+  process:
+  - type: diffusion_trainer
+    training_folder: E:\project\loraTrainer\compressed\ai-toolkit\outputs
+    sqlite_db_path: E:\project\loraTrainer\compressed\ai-toolkit\aitk_db.db
+    device: cuda
+    trigger_word: null
+    performance_log_every: 10
+    disable_progress_bar: false
+    progress_bar_mininterval: 1.0
+    network:
+      type: lora
+      linear: 4
+      linear_alpha: 4
+      conv: 4
+      conv_alpha: 4
+      lokr_full_rank: true
+      lokr_factor: -1
+      network_kwargs:
+        ignore_if_contains: []
+    save:
+      dtype: float16
+      save_every: 10
+      save_best_model: true
+      max_step_saves_to_keep: 2
+      save_format: safetensors
+      push_to_hub: false
+    datasets:
+    - folder_path: E:\IDrawing\lora_enc
+      cache_dir: E:\project\loraTrainer\compressed\ai-toolkit\outputs\sdxl_local_test\dataset_cache
+      mask_path: null
+      mask_min_value: 0.1
+      default_caption: ''
+      caption_ext: txt
+      decode_images: true
+      decode_key: 123456789
+      caption_dropout_rate: 0.05
+      cache_latents: false
+      cache_latents_to_disk: false
+      num_workers: 2
+      prefetch_factor: 2
+      is_reg: false
+      network_weight: 1
+      resolution:
+      - 512
+      controls: []
+      shrink_video_to_frames: false
+      num_frames: 1
+      do_i2v: false
+      flip_x: false
+      flip_y: false
+    train:
+      batch_size: 1
+      bypass_guidance_embedding: false
+      steps: 10
+      gradient_accumulation: 1
+      train_unet: true
+      train_text_encoder: false
+      gradient_checkpointing: true
+      noise_scheduler: ddpm
+      optimizer: adamw8bit
+      timestep_type: sigmoid
+      content_or_style: balanced
+      optimizer_params:
+        weight_decay: 0.0001
+      unload_text_encoder: false
+      cache_text_embeddings: false
+      lr: 0.0001
+      ema_config:
+        use_ema: false
+        ema_decay: 0.99
+      skip_first_sample: false
+      force_first_sample: false
+      disable_sampling: true
+      dtype: fp16
+      diff_output_preservation: false
+      diff_output_preservation_multiplier: 1.0
+      diff_output_preservation_class: person
+      switch_boundary_every: 1
+      loss_type: mse
+    logging:
+      log_every: 1
+      use_ui_logger: false
+    model:
+      name_or_path: E:\IDrawing\ComfyUI-aki-v1.7\ComfyUI\models\checkpoints\bespokeillmix_v10.safetensors
+      quantize: false
+      qtype: qfloat8
+      quantize_te: false
+      qtype_te: qfloat8
+      arch: sdxl
+      low_vram: false
+      vae_dtype: fp32
+      model_kwargs: {}
+    sample:
+      sampler: ddpm
+      sample_every: 10
+      width: 1024
+      height: 1024
+      samples:
+      - prompt: 1girl
+      neg: ''
+      seed: 42
+      walk_seed: false
+      guidance_scale: 6.0
+      sample_steps: 20
+      num_frames: 1
+      fps: 1
+meta:
+  name: sdxl_local_test
+  version: '1.0'

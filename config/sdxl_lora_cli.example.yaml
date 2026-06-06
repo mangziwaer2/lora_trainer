@@ -1,5 +1,5 @@
-name: sdxl_lora
-dataset: /kaggle/input/datasets/wangziwa2/lora-dataset2/lora_enc
+name: anime2
+dataset: /kaggle/input/datasets/mangziwaer2/loradataset/lora_enc
 model: John6666/bespoke-illmix-v10-sdxl
 output: /kaggle/working/ai-toolkit-output
 # Optional writable cache dir for read-only datasets such as /kaggle/input.
@@ -8,8 +8,8 @@ output: /kaggle/working/ai-toolkit-output
 
 trigger_word: null
 steps: 20000
-batch_size: 2
-gradient_accumulation: 1
+batch_size: 1
+gradient_accumulation: 2
 lr: 0.0001
 optimizer: adamw8bit
 save_every: 1000
@@ -48,8 +48,8 @@ sample_steps: 20
 guidance_scale: 6.0
 seed: 42
 walk_seed: true
-disable_sampling: false
-no_skip_first_sample: false
+disable_sampling: true
+no_skip_first_sample: true
 
 # Optional:
 # sample_prompts_file: /kaggle/input/prompts/prompts.txt

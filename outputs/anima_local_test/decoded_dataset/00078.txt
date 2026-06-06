@@ -1,0 +1,1 @@
+outdoors, sky,  , building, scenery, sunset, road, power_lines, street, utility_pole, gradient_sky

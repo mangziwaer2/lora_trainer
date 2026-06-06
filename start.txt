@@ -1,0 +1,5 @@
+git clone https://github.com/mangziwaer2/lora_trainer.git
+cd lora_trainer
+pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+pip3 install -r requirements.txt
+python train_sdxl_lora.py --config-file /root/autodl-tmp/lora_trainer/config/sdxl_lora_cli.example.yaml
