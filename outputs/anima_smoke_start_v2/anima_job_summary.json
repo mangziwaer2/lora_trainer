@@ -1,0 +1,12 @@
+{
+  "name": "anima_smoke_start_v2",
+  "dataset_root_used": "E:\\project\\loraTrainer\\compressed\\ai-toolkit\\outputs\\anima_local_test\\decoded_dataset",
+  "dataset_config_path": "E:\\project\\loraTrainer\\compressed\\ai-toolkit\\outputs\\anima_smoke_start_v2\\anima_dataset_config.toml",
+  "command_path": "E:\\project\\loraTrainer\\compressed\\ai-toolkit\\outputs\\anima_smoke_start_v2\\anima_launch_command.json",
+  "sd_scripts_root": "E:\\project\\loraTrainer\\compressed\\ai-toolkit\\vendor\\sd-scripts",
+  "decode_images": false,
+  "batch_size": 1,
+  "gradient_accumulation_steps": 1,
+  "effective_batch_size_single_process": 1,
+  "num_repeats": 1
+}

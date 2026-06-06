@@ -1,5 +1,12 @@
-git clone https://github.com/mangziwaer2/lora_trainer.git
-cd lora_trainer
-pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
-pip3 install -r requirements.txt
-python train_sdxl_lora.py --config-file /root/autodl-tmp/lora_trainer/config/sdxl_lora_cli.example.yaml
+git clone <your-repo-url>
+cd ai-toolkit
+
+# install deps, then edit config/sdxl_lora_cli.example.yaml or config/anima_lora_cli.example.yaml
+# dataset/model paths can be absolute, or repo-relative paths resolved from the config file
+
+# SDXL
+python train_sdxl_lora.py --config-file config/sdxl_lora_cli.example.yaml
+
+# Anima
+# train_anima.py auto-detects vendor/sd-scripts, so sd_scripts_root can usually be omitted
+python train_anima.py --config-file config/anima_lora_cli.example.yaml

@@ -1,0 +1,89 @@
+name: anima_lora
+
+# Relative paths are resolved from this config file's folder.
+# Minimum required changes for a new machine:
+# 1. dataset
+# 2. model
+# 3. qwen3
+# 4. vae
+dataset: ../datasets/anima_encoded
+model: /path/to/anima_base_or_comfyui_unet.safetensors
+qwen3: /path/to/qwen_3_06b_base.safetensors
+vae: /path/to/qwen_image_vae.safetensors
+output: ../outputs
+
+# Optional if your Anima base checkpoint does not already contain the LLM adapter.
+# llm_adapter_path: /path/to/llm_adapter.safetensors
+
+# Optional. If omitted, train_anima.py auto-detects ../vendor/sd-scripts first.
+# sd_scripts_root: ../vendor/sd-scripts
+# Optional. If omitted, this script uses the current Python environment.
+# sd_scripts_python: ../.venv/Scripts/python.exe
+
+# Same style as SDXL config where possible.
+steps: 20000
+batch_size: 1
+gradient_accumulation: 4
+lr: 0.0001
+optimizer: AdamW8bit
+save_every: 1000
+
+# Anima still uses dataset repeats, unlike the SDXL wrapper in this repo.
+# This changes epoch length, not effective batch size.
+num_repeats: 1
+
+# LoRA rank. Alias of network_dim.
+rank: 8
+
+# Anima-specific training settings that usually do not need frequent changes.
+resolution: 1024
+caption_ext: txt
+decode_images: true
+decode_key: 123456789
+allow_lossy_extensions: false
+
+enable_bucket: true
+bucket_reso_steps: 64
+min_bucket_reso: 512
+max_bucket_reso: 1536
+bucket_no_upscale: false
+flip_aug: false
+shuffle_caption: false
+
+dtype: bf16
+save_format: safetensors
+low_vram: false
+gradient_checkpointing: true
+cache_latents: true
+cache_text_encoder_outputs: true
+
+# Keep this enabled with cache_text_encoder_outputs to avoid text-side training conflicts.
+network_train_unet_only: true
+
+seed: 42
+lr_scheduler: constant
+timestep_sampling: sigmoid
+discrete_flow_shift: 1.0
+
+# If both are set, sd-scripts uses max_train_steps directly.
+# max_train_epochs is kept mainly for compatibility and long-run configs.
+max_train_epochs: 4000
+
+# When save_every is set above, this epoch-based save interval is ignored by this wrapper.
+save_every_n_epochs: 100
+
+# Optional tuning knobs.
+# network_alpha: 8
+# vae_chunk_size: 64
+# vae_disable_cache: true
+# t5_tokenizer_path: ../vendor/sd-scripts/configs/t5_old
+
+# Extra raw arguments appended to anima_train_network.py if needed.
+# extra_args:
+#   - --sample_every_n_steps
+#   - "500"
+
+# Optional outputs/debug.
+# decoded_dataset_dir: ../outputs/anima_lora/decoded_dataset
+# command_path: ../outputs/anima_lora/anima_launch_command.json
+# write_config_only: true

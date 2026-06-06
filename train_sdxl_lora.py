@@ -11,6 +11,8 @@ import yaml
 
 
 IS_KAGGLE = bool(os.environ.get("KAGGLE_KERNEL_RUN_TYPE")) or Path("/kaggle").exists()
+REPO_ROOT = Path(__file__).resolve().parent
+DEFAULT_CONFIG_PATH = REPO_ROOT / "config" / "sdxl_lora_cli.example.yaml"
 
 
 DEFAULTS: dict[str, Any] = {
@@ -71,7 +73,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Launch SDXL LoRA training from the command line without the UI.",
     )
-    parser.add_argument("--config-file", default=r"E:\project\loraTrainer\compressed\ai-toolkit\config\sdxl_lora_cli.example.yaml", help="Path to a simple YAML or JSON config file.")
+    parser.add_argument("--config-file", default=str(DEFAULT_CONFIG_PATH), help="Path to a simple YAML or JSON config file.")
 
     parser.add_argument("--dataset", default=None, help="Dataset folder path.")
     parser.add_argument(
@@ -179,7 +181,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def load_simple_config(config_file: str) -> dict[str, Any]:
+def load_simple_config(config_file: str) -> tuple[dict[str, Any], Path]:
     path = Path(config_file).expanduser().resolve()
     if not path.exists():
         raise FileNotFoundError(f"Config file does not exist: {config_file}")
@@ -192,19 +194,25 @@ def load_simple_config(config_file: str) -> dict[str, Any]:
 
     if not isinstance(loaded, dict):
         raise ValueError("Config file must contain a top-level mapping/object.")
-    return loaded
+    return loaded, path
 
 
 def merge_settings(args: argparse.Namespace) -> dict[str, Any]:
     settings = dict(DEFAULTS)
+    cli_overrides: set[str] = set()
     if args.config_file:
-        settings.update(load_simple_config(args.config_file))
+        loaded_config, config_path = load_simple_config(args.config_file)
+        settings.update(loaded_config)
+        settings["_config_dir"] = str(config_path.parent)
 
     for key, value in vars(args).items():
         if key == "config_file":
             continue
         if value is not None:
             settings[key] = value
+            cli_overrides.add(key)
+
+    settings["_cli_overrides"] = sorted(cli_overrides)
 
     required_fields = ["dataset", "model", "output", "name"]
     missing = [field for field in required_fields if not settings.get(field)]
@@ -232,17 +240,38 @@ def merge_settings(args: argparse.Namespace) -> dict[str, Any]:
     return settings
 
 
-def normalize_existing_path(raw_path: str, label: str) -> str:
+def get_config_dir(settings: dict[str, Any]) -> Path | None:
+    raw_dir = settings.get("_config_dir")
+    if not raw_dir:
+        return None
+    return Path(raw_dir)
+
+
+def get_base_dir_for_setting(settings: dict[str, Any], key: str) -> Path | None:
+    cli_overrides = set(settings.get("_cli_overrides", []))
+    if key in cli_overrides:
+        return Path.cwd()
+    return get_config_dir(settings)
+
+
+def resolve_path(raw_path: str, base_dir: Path | None = None) -> Path:
     path = Path(raw_path).expanduser()
+    if not path.is_absolute() and base_dir is not None:
+        path = base_dir / path
+    return path.resolve()
+
+
+def normalize_existing_path(raw_path: str, label: str, base_dir: Path | None = None) -> str:
+    path = resolve_path(raw_path, base_dir=base_dir)
     if not path.exists():
         raise FileNotFoundError(f"{label} does not exist: {raw_path}")
-    return str(path.resolve())
+    return str(path)
 
 
-def normalize_model_path(raw_value: str) -> str:
-    path = Path(raw_value).expanduser()
+def normalize_model_path(raw_value: str, base_dir: Path | None = None) -> str:
+    path = resolve_path(raw_value, base_dir=base_dir)
     if path.exists():
-        return str(path.resolve())
+        return str(path)
     return raw_value
 
 
@@ -250,7 +279,10 @@ def load_sample_prompts(settings: dict[str, Any]) -> list[str]:
     prompts = list(settings.get("sample_prompts", []))
     sample_prompts_file = settings.get("sample_prompts_file")
     if sample_prompts_file:
-        prompts_path = Path(sample_prompts_file).expanduser()
+        prompts_path = resolve_path(
+            sample_prompts_file,
+            base_dir=get_base_dir_for_setting(settings, "sample_prompts_file"),
+        )
         if not prompts_path.exists():
             raise FileNotFoundError(f"Sample prompts file does not exist: {sample_prompts_file}")
         file_prompts = [line.strip() for line in prompts_path.read_text(encoding="utf-8").splitlines() if line.strip()]
@@ -279,13 +311,23 @@ def resolve_process_type(settings: dict[str, Any]) -> str:
 
 
 def build_config(settings: dict[str, Any], repo_root: Path) -> dict[str, Any]:
-    dataset_path = normalize_existing_path(settings["dataset"], "Dataset path")
-    output_root = Path(settings["output"]).expanduser().resolve()
+    dataset_path = normalize_existing_path(
+        settings["dataset"],
+        "Dataset path",
+        base_dir=get_base_dir_for_setting(settings, "dataset"),
+    )
+    output_root = resolve_path(settings["output"], base_dir=get_base_dir_for_setting(settings, "output"))
     output_root.mkdir(parents=True, exist_ok=True)
-    model_path = normalize_model_path(settings["model"])
+    model_path = normalize_model_path(
+        settings["model"],
+        base_dir=get_base_dir_for_setting(settings, "model"),
+    )
     dataset_cache_dir = settings.get("dataset_cache_dir")
     if dataset_cache_dir:
-        dataset_cache_dir = Path(dataset_cache_dir).expanduser().resolve()
+        dataset_cache_dir = resolve_path(
+            dataset_cache_dir,
+            base_dir=get_base_dir_for_setting(settings, "dataset_cache_dir"),
+        )
     else:
         dataset_cache_dir = output_root / settings["name"] / "dataset_cache"
     dataset_cache_dir.mkdir(parents=True, exist_ok=True)
@@ -444,19 +486,26 @@ def run_training(repo_root: Path, config_path: Path, log_path: str | None) -> in
 
 def main() -> int:
     args = parse_args()
-    repo_root = Path(__file__).resolve().parent
+    repo_root = REPO_ROOT
     settings = merge_settings(args)
     if settings.get("debug_first_batch_dir"):
-        debug_dir = Path(settings["debug_first_batch_dir"]).expanduser().resolve()
+        debug_dir = resolve_path(
+            settings["debug_first_batch_dir"],
+            base_dir=get_base_dir_for_setting(settings, "debug_first_batch_dir"),
+        )
         debug_dir.mkdir(parents=True, exist_ok=True)
         os.environ["AITK_DEBUG_FIRST_BATCH_DIR"] = str(debug_dir)
         print(f"First-batch debug artifacts enabled: {debug_dir}")
     config = build_config(settings, repo_root)
 
     if settings["config_path"]:
-        config_path = Path(settings["config_path"]).expanduser().resolve()
+        config_path = resolve_path(settings["config_path"], base_dir=get_base_dir_for_setting(settings, "config_path"))
     else:
-        config_path = Path(settings["output"]).expanduser().resolve() / settings["name"] / "cli_job_config.json"
+        config_path = (
+            resolve_path(settings["output"], base_dir=get_base_dir_for_setting(settings, "output"))
+            / settings["name"]
+            / "cli_job_config.json"
+        )
 
     write_config(config, config_path)
     print(f"Config written to: {config_path}")

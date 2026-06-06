@@ -16,6 +16,12 @@ from PIL import Image
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 LOSSY_EXTENSIONS = {".jpg", ".jpeg", ".webp"}
+REPO_ROOT = Path(__file__).resolve().parent
+DEFAULT_CONFIG_PATH = REPO_ROOT / "config" / "anima_lora_cli.example.yaml"
+DEFAULT_SD_SCRIPTS_CANDIDATES = [
+    REPO_ROOT / "vendor" / "sd-scripts",
+    REPO_ROOT / "temp" / "sd-scripts",
+]
 
 
 DEFAULTS: dict[str, Any] = {
@@ -29,6 +35,7 @@ DEFAULTS: dict[str, Any] = {
     "sd_scripts_python": None,
     "num_cpu_threads_per_process": 1,
     "batch_size": 1,
+    "gradient_accumulation_steps": 1,
     "num_repeats": 1,
     "resolution": 1024,
     "enable_bucket": True,
@@ -50,10 +57,13 @@ DEFAULTS: dict[str, Any] = {
     "max_train_epochs": 10,
     "max_train_steps": None,
     "save_every_n_epochs": 1,
+    "save_every_n_steps": None,
     "mixed_precision": "bf16",
     "gradient_checkpointing": True,
     "cache_latents": True,
     "cache_text_encoder_outputs": True,
+    "network_train_unet_only": True,
+    "low_vram": False,
     "vae_chunk_size": 64,
     "vae_disable_cache": True,
     "save_model_as": "safetensors",
@@ -70,15 +80,19 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--config-file",
-        default=r"E:\project\loraTrainer\compressed\ai-toolkit\config\anima_lora_cli.example.yaml",
+        default=str(DEFAULT_CONFIG_PATH),
         help="Path to a simple YAML or JSON config file.",
     )
     parser.add_argument("--dataset", default=None, help="Dataset folder path.")
     parser.add_argument("--output", default=None, help="Output root folder.")
     parser.add_argument("--name", default=None, help="Training job name.")
-    parser.add_argument("--sd-scripts-root", default=None, help="Path to a local sd-scripts checkout.")
+    parser.add_argument(
+        "--sd-scripts-root",
+        default=None,
+        help="Optional path to a local sd-scripts checkout. If omitted, this script auto-detects vendor/sd-scripts.",
+    )
     parser.add_argument("--sd-scripts-python", default=None, help="Python executable for the sd-scripts environment.")
-    parser.add_argument("--anima-model", default=None, help="Path to the Anima DiT .safetensors file.")
+    parser.add_argument("--anima-model", "--model", dest="anima_model", default=None, help="Path to the Anima DiT .safetensors file.")
     parser.add_argument("--qwen3", default=None, help="Path to the Qwen3-0.6B directory or .safetensors file.")
     parser.add_argument("--vae", default=None, help="Path to the Qwen-Image VAE file.")
     parser.add_argument("--llm-adapter-path", default=None, help="Optional path to a separate LLM adapter file.")
@@ -106,6 +120,14 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--num-cpu-threads-per-process", type=int, default=None, help="accelerate launch CPU thread count.")
     parser.add_argument("--batch-size", type=int, default=None, help="Per-step batch size.")
+    parser.add_argument(
+        "--gradient-accumulation-steps",
+        "--gradient-accumulation",
+        type=int,
+        dest="gradient_accumulation_steps",
+        default=None,
+        help="Gradient accumulation steps. This changes the effective batch size without increasing per-step VRAM.",
+    )
     parser.add_argument("--num-repeats", type=int, default=None, help="Dataset subset repeat count.")
     parser.add_argument(
         "--resolution",
@@ -138,17 +160,18 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--seed", type=int, default=None, help="Random seed.")
     parser.add_argument("--network-module", default=None, help="Network module to train, usually networks.lora_anima.")
-    parser.add_argument("--network-dim", type=int, default=None, help="LoRA rank.")
+    parser.add_argument("--network-dim", "--rank", dest="network_dim", type=int, default=None, help="LoRA rank.")
     parser.add_argument("--network-alpha", type=int, default=None, help="Optional LoRA alpha.")
-    parser.add_argument("--learning-rate", type=float, default=None, help="Learning rate.")
-    parser.add_argument("--optimizer-type", default=None, help="Optimizer type.")
+    parser.add_argument("--learning-rate", "--lr", dest="learning_rate", type=float, default=None, help="Learning rate.")
+    parser.add_argument("--optimizer-type", "--optimizer", dest="optimizer_type", default=None, help="Optimizer type.")
     parser.add_argument("--lr-scheduler", default=None, help="Learning-rate scheduler.")
     parser.add_argument("--timestep-sampling", default=None, help="Anima timestep sampling mode.")
     parser.add_argument("--discrete-flow-shift", type=float, default=None, help="Discrete flow shift.")
     parser.add_argument("--max-train-epochs", type=int, default=None, help="Maximum training epochs.")
-    parser.add_argument("--max-train-steps", type=int, default=None, help="Optional explicit max training steps.")
+    parser.add_argument("--max-train-steps", "--steps", dest="max_train_steps", type=int, default=None, help="Optional explicit max training steps.")
     parser.add_argument("--save-every-n-epochs", type=int, default=None, help="Checkpoint save interval in epochs.")
-    parser.add_argument("--mixed-precision", default=None, help="Mixed precision mode, for example bf16.")
+    parser.add_argument("--save-every-n-steps", "--save-every", dest="save_every_n_steps", type=int, default=None, help="Checkpoint save interval in steps.")
+    parser.add_argument("--mixed-precision", "--dtype", dest="mixed_precision", default=None, help="Mixed precision mode, for example bf16.")
     parser.add_argument(
         "--gradient-checkpointing",
         action=argparse.BooleanOptionalAction,
@@ -167,6 +190,18 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Cache frozen text encoder outputs in sd-scripts.",
     )
+    parser.add_argument(
+        "--network-train-unet-only",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Train only the Anima DiT/UNet-side LoRA. This should stay enabled when caching text encoder outputs.",
+    )
+    parser.add_argument(
+        "--low-vram",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Forward sd-scripts --lowram to reduce peak memory usage.",
+    )
     parser.add_argument("--vae-chunk-size", type=int, default=None, help="VAE chunk size.")
     parser.add_argument(
         "--vae-disable-cache",
@@ -174,13 +209,13 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Disable the VAE internal cache.",
     )
-    parser.add_argument("--save-model-as", default=None, choices=["safetensors", "ckpt", "pt"], help="Output format.")
+    parser.add_argument("--save-model-as", "--save-format", dest="save_model_as", default=None, choices=["safetensors", "ckpt", "pt"], help="Output format.")
     parser.add_argument("--command-path", default=None, help="Optional path to write the generated launch command JSON.")
     parser.add_argument("--write-config-only", action="store_true", default=None, help="Only write generated config files and exit.")
     return parser.parse_args()
 
 
-def load_simple_config(config_file: str) -> dict[str, Any]:
+def load_simple_config(config_file: str) -> tuple[dict[str, Any], Path]:
     path = Path(config_file).expanduser().resolve()
     if not path.exists():
         raise FileNotFoundError(f"Config file does not exist: {config_file}")
@@ -193,21 +228,47 @@ def load_simple_config(config_file: str) -> dict[str, Any]:
 
     if not isinstance(loaded, dict):
         raise ValueError("Config file must contain a top-level mapping/object.")
-    return loaded
+    return loaded, path
+
+
+def normalize_config_aliases(config: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(config)
+    aliases = {
+        "model": "anima_model",
+        "gradient_accumulation": "gradient_accumulation_steps",
+        "rank": "network_dim",
+        "lr": "learning_rate",
+        "optimizer": "optimizer_type",
+        "steps": "max_train_steps",
+        "save_every": "save_every_n_steps",
+        "save_format": "save_model_as",
+        "dtype": "mixed_precision",
+    }
+    for alias, canonical in aliases.items():
+        if alias in normalized and canonical not in normalized:
+            normalized[canonical] = normalized[alias]
+    return normalized
 
 
 def merge_settings(args: argparse.Namespace) -> dict[str, Any]:
     settings = dict(DEFAULTS)
+    cli_overrides: set[str] = set()
     if args.config_file:
-        settings.update(load_simple_config(args.config_file))
+        loaded_config, config_path = load_simple_config(args.config_file)
+        loaded_config = normalize_config_aliases(loaded_config)
+        settings.update(loaded_config)
+        settings["_config_dir"] = str(config_path.parent)
 
     for key, value in vars(args).items():
         if key == "config_file":
             continue
         if value is not None:
             settings[key] = value
+            cli_overrides.add(key)
 
-    required_fields = ["dataset", "output", "name", "sd_scripts_root", "anima_model", "qwen3", "vae"]
+    settings["_cli_overrides"] = sorted(cli_overrides)
+
+    required_fields = ["dataset", "output", "name", "anima_model", "qwen3", "vae"]
     missing = [field for field in required_fields if not settings.get(field)]
     if missing:
         raise ValueError(f"Missing required settings: {', '.join(missing)}")
@@ -222,6 +283,8 @@ def merge_settings(args: argparse.Namespace) -> dict[str, Any]:
 
     if settings["batch_size"] < 1:
         raise ValueError("batch_size must be >= 1")
+    if settings["gradient_accumulation_steps"] < 1:
+        raise ValueError("gradient_accumulation_steps must be >= 1")
     if settings["num_repeats"] < 1:
         raise ValueError("num_repeats must be >= 1")
     if settings["bucket_reso_steps"] < 1:
@@ -234,6 +297,8 @@ def merge_settings(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError("max_train_epochs must be >= 1")
     if settings["max_train_steps"] is not None and settings["max_train_steps"] < 1:
         raise ValueError("max_train_steps must be >= 1 when provided")
+    if settings["save_every_n_steps"] is not None and settings["save_every_n_steps"] < 1:
+        raise ValueError("save_every_n_steps must be >= 1 when provided")
     if settings["num_cpu_threads_per_process"] < 1:
         raise ValueError("num_cpu_threads_per_process must be >= 1")
     if not isinstance(settings["extra_args"], list):
@@ -242,17 +307,53 @@ def merge_settings(args: argparse.Namespace) -> dict[str, Any]:
     return settings
 
 
-def normalize_existing_path(raw_path: str, label: str) -> str:
+def get_config_dir(settings: dict[str, Any]) -> Path | None:
+    raw_dir = settings.get("_config_dir")
+    if not raw_dir:
+        return None
+    return Path(raw_dir)
+
+
+def get_base_dir_for_setting(settings: dict[str, Any], key: str) -> Path | None:
+    cli_overrides = set(settings.get("_cli_overrides", []))
+    if key in cli_overrides:
+        return Path.cwd()
+    return get_config_dir(settings)
+
+
+def resolve_path(raw_path: str, base_dir: Path | None = None) -> Path:
     path = Path(raw_path).expanduser()
+    if not path.is_absolute() and base_dir is not None:
+        path = base_dir / path
+    return path.resolve()
+
+
+def normalize_existing_path(raw_path: str, label: str, base_dir: Path | None = None) -> str:
+    path = resolve_path(raw_path, base_dir=base_dir)
     if not path.exists():
         raise FileNotFoundError(f"{label} does not exist: {raw_path}")
-    return str(path.resolve())
+    return str(path)
 
 
-def normalize_optional_path(raw_path: str | None, label: str) -> str | None:
+def normalize_optional_path(raw_path: str | None, label: str, base_dir: Path | None = None) -> str | None:
     if raw_path is None:
         return None
-    return normalize_existing_path(raw_path, label)
+    return normalize_existing_path(raw_path, label, base_dir=base_dir)
+
+
+def resolve_sd_scripts_root(raw_path: str | None, base_dir: Path | None = None) -> Path:
+    if raw_path:
+        return Path(normalize_existing_path(raw_path, "sd-scripts root", base_dir=base_dir))
+
+    for candidate in DEFAULT_SD_SCRIPTS_CANDIDATES:
+        if candidate.exists():
+            return candidate.resolve()
+
+    searched = ", ".join(str(path) for path in DEFAULT_SD_SCRIPTS_CANDIDATES)
+    raise FileNotFoundError(
+        "sd-scripts root was not provided and no bundled checkout was found. "
+        f"Searched: {searched}"
+    )
 
 
 def decode_image_simple(enc_path: Path, key: int) -> Image.Image:
@@ -272,8 +373,13 @@ def find_dataset_image_dirs(dataset_root: Path) -> list[Path]:
 
 
 def decode_dataset(settings: dict[str, Any], job_root: Path) -> tuple[list[Path], Path]:
-    source_root = Path(normalize_existing_path(settings["dataset"], "Dataset path"))
-    target_root = Path(settings["decoded_dataset_dir"]).expanduser().resolve() if settings["decoded_dataset_dir"] else job_root / "decoded_dataset"
+    config_dir = get_base_dir_for_setting(settings, "dataset")
+    source_root = Path(normalize_existing_path(settings["dataset"], "Dataset path", base_dir=config_dir))
+    target_root = (
+        resolve_path(settings["decoded_dataset_dir"], base_dir=get_base_dir_for_setting(settings, "decoded_dataset_dir"))
+        if settings["decoded_dataset_dir"]
+        else job_root / "decoded_dataset"
+    )
     target_root.mkdir(parents=True, exist_ok=True)
 
     caption_ext = str(settings["caption_ext"]).lstrip(".")
@@ -323,7 +429,13 @@ def decode_dataset(settings: dict[str, Any], job_root: Path) -> tuple[list[Path]
 
 
 def collect_plain_dataset(settings: dict[str, Any]) -> tuple[list[Path], Path]:
-    source_root = Path(normalize_existing_path(settings["dataset"], "Dataset path"))
+    source_root = Path(
+        normalize_existing_path(
+            settings["dataset"],
+            "Dataset path",
+            base_dir=get_base_dir_for_setting(settings, "dataset"),
+        )
+    )
     return find_dataset_image_dirs(source_root), source_root
 
 
@@ -359,12 +471,23 @@ def build_dataset_config(settings: dict[str, Any], image_dirs: list[Path], outpu
 
 
 def build_command(settings: dict[str, Any], dataset_config_path: Path) -> tuple[list[str], Path]:
-    sd_scripts_root = Path(normalize_existing_path(settings["sd_scripts_root"], "sd-scripts root"))
+    sd_scripts_root = resolve_sd_scripts_root(
+        settings.get("sd_scripts_root"),
+        base_dir=get_base_dir_for_setting(settings, "sd_scripts_root"),
+    )
     script_path = sd_scripts_root / "anima_train_network.py"
     if not script_path.exists():
         raise FileNotFoundError(f"sd-scripts does not contain anima_train_network.py: {script_path}")
 
-    python_executable = settings["sd_scripts_python"] or sys.executable
+    python_executable = (
+        normalize_existing_path(
+            settings["sd_scripts_python"],
+            "sd-scripts Python",
+            base_dir=get_base_dir_for_setting(settings, "sd_scripts_python"),
+        )
+        if settings["sd_scripts_python"]
+        else sys.executable
+    )
     command = [
         python_executable,
         "-m",
@@ -373,17 +496,31 @@ def build_command(settings: dict[str, Any], dataset_config_path: Path) -> tuple[
         str(int(settings["num_cpu_threads_per_process"])),
         str(script_path),
         "--pretrained_model_name_or_path",
-        normalize_existing_path(settings["anima_model"], "Anima model"),
+        normalize_existing_path(
+            settings["anima_model"],
+            "Anima model",
+            base_dir=get_base_dir_for_setting(settings, "anima_model"),
+        ),
         "--qwen3",
-        normalize_existing_path(settings["qwen3"], "Qwen3 model"),
+        normalize_existing_path(
+            settings["qwen3"],
+            "Qwen3 model",
+            base_dir=get_base_dir_for_setting(settings, "qwen3"),
+        ),
         "--vae",
-        normalize_existing_path(settings["vae"], "Qwen-Image VAE"),
+        normalize_existing_path(
+            settings["vae"],
+            "Qwen-Image VAE",
+            base_dir=get_base_dir_for_setting(settings, "vae"),
+        ),
         "--dataset_config",
         str(dataset_config_path),
         "--output_dir",
-        str(Path(settings["output"]).expanduser().resolve()),
+        str(resolve_path(settings["output"], base_dir=get_base_dir_for_setting(settings, "output"))),
         "--output_name",
         settings["name"],
+        "--gradient_accumulation_steps",
+        str(int(settings["gradient_accumulation_steps"])),
         "--save_model_as",
         settings["save_model_as"],
         "--network_module",
@@ -402,8 +539,6 @@ def build_command(settings: dict[str, Any], dataset_config_path: Path) -> tuple[
         str(settings["discrete_flow_shift"]),
         "--max_train_epochs",
         str(int(settings["max_train_epochs"])),
-        "--save_every_n_epochs",
-        str(int(settings["save_every_n_epochs"])),
         "--mixed_precision",
         settings["mixed_precision"],
         "--seed",
@@ -416,16 +551,42 @@ def build_command(settings: dict[str, Any], dataset_config_path: Path) -> tuple[
         command.extend(["--network_alpha", str(int(settings["network_alpha"]))])
     if settings["max_train_steps"] is not None:
         command.extend(["--max_train_steps", str(int(settings["max_train_steps"]))])
+    if settings["save_every_n_steps"] is not None:
+        command.extend(["--save_every_n_steps", str(int(settings["save_every_n_steps"]))])
+    else:
+        command.extend(["--save_every_n_epochs", str(int(settings["save_every_n_epochs"]))])
     if settings["llm_adapter_path"] is not None:
-        command.extend(["--llm_adapter_path", normalize_existing_path(settings["llm_adapter_path"], "LLM adapter path")])
+        command.extend(
+            [
+                "--llm_adapter_path",
+                normalize_existing_path(
+                    settings["llm_adapter_path"],
+                    "LLM adapter path",
+                    base_dir=get_base_dir_for_setting(settings, "llm_adapter_path"),
+                ),
+            ]
+        )
     if settings["t5_tokenizer_path"] is not None:
-        command.extend(["--t5_tokenizer_path", normalize_existing_path(settings["t5_tokenizer_path"], "T5 tokenizer path")])
+        command.extend(
+            [
+                "--t5_tokenizer_path",
+                normalize_existing_path(
+                    settings["t5_tokenizer_path"],
+                    "T5 tokenizer path",
+                    base_dir=get_base_dir_for_setting(settings, "t5_tokenizer_path"),
+                ),
+            ]
+        )
     if settings["gradient_checkpointing"]:
         command.append("--gradient_checkpointing")
     if settings["cache_latents"]:
         command.append("--cache_latents")
     if settings["cache_text_encoder_outputs"]:
         command.append("--cache_text_encoder_outputs")
+    if settings["network_train_unet_only"]:
+        command.append("--network_train_unet_only")
+    if settings["low_vram"]:
+        command.append("--lowram")
     if settings["vae_disable_cache"]:
         command.append("--vae_disable_cache")
     if settings["extra_args"]:
@@ -451,7 +612,7 @@ def main() -> int:
     args = parse_args()
     settings = merge_settings(args)
 
-    output_root = Path(settings["output"]).expanduser().resolve()
+    output_root = resolve_path(settings["output"], base_dir=get_base_dir_for_setting(settings, "output"))
     output_root.mkdir(parents=True, exist_ok=True)
     job_root = output_root / settings["name"]
     job_root.mkdir(parents=True, exist_ok=True)
@@ -464,7 +625,11 @@ def main() -> int:
     dataset_config_path = build_dataset_config(settings, image_dirs, job_root / "anima_dataset_config.toml")
     command, workdir = build_command(settings, dataset_config_path)
 
-    command_path = Path(settings["command_path"]).expanduser().resolve() if settings["command_path"] else job_root / "anima_launch_command.json"
+    command_path = (
+        resolve_path(settings["command_path"], base_dir=get_base_dir_for_setting(settings, "command_path"))
+        if settings["command_path"]
+        else job_root / "anima_launch_command.json"
+    )
     write_command(command, command_path)
 
     summary = {
@@ -472,7 +637,12 @@ def main() -> int:
         "dataset_root_used": str(decoded_root),
         "dataset_config_path": str(dataset_config_path),
         "command_path": str(command_path),
+        "sd_scripts_root": str(workdir),
         "decode_images": bool(settings["decode_images"]),
+        "batch_size": int(settings["batch_size"]),
+        "gradient_accumulation_steps": int(settings["gradient_accumulation_steps"]),
+        "effective_batch_size_single_process": int(settings["batch_size"]) * int(settings["gradient_accumulation_steps"]),
+        "num_repeats": int(settings["num_repeats"]),
     }
     (job_root / "anima_job_summary.json").write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
 
