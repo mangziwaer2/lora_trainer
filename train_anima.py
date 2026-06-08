@@ -2,6 +2,7 @@
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -15,6 +16,7 @@ from PIL import Image
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 LOSSY_EXTENSIONS = {".jpg", ".jpeg", ".webp"}
+SUPPORTED_WEIGHT_EXTENSIONS = (".safetensors", ".ckpt", ".pt")
 IS_KAGGLE = bool(os.environ.get("KAGGLE_KERNEL_RUN_TYPE")) or Path("/kaggle").exists()
 REPO_ROOT = Path(__file__).resolve().parent
 DEFAULT_CONFIG_PATH = REPO_ROOT / "config" / "anima_lora_cli.example.yaml"
@@ -106,9 +108,16 @@ DEFAULTS: dict[str, Any] = {
     "loraplus_unet_lr_ratio": None,
     "loraplus_text_encoder_lr_ratio": None,
     "network_weights": None,
+    "auto_resume": True,
     "dim_from_weights": False,
     "base_weights": [],
     "base_weights_multiplier": [],
+    "resume": None,
+    "save_state": False,
+    "save_state_on_train_end": False,
+    "initial_epoch": None,
+    "initial_step": None,
+    "skip_until_initial_step": False,
     "validation_seed": None,
     "validation_split": 0.0,
     "validate_every_n_steps": None,
@@ -377,10 +386,37 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--save-model-as", "--save-format", dest="save_model_as", default=None, choices=["safetensors", "ckpt", "pt"], help="Output format.")
     parser.add_argument("--network-weights", default=None, help="Optional pretrained LoRA/network weights.")
     parser.add_argument(
+        "--auto-resume",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Automatically reuse the latest state or LoRA weight found in the output directory when resume/network_weights is not set.",
+    )
+    parser.add_argument(
         "--dim-from-weights",
         action=argparse.BooleanOptionalAction,
         default=None,
         help="Infer LoRA rank from network_weights.",
+    )
+    parser.add_argument("--resume", default=None, help="Path to a saved training state directory for full resume.")
+    parser.add_argument(
+        "--save-state",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Save optimizer/scheduler/training state alongside checkpoints.",
+    )
+    parser.add_argument(
+        "--save-state-on-train-end",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Save optimizer/scheduler/training state at the end of training.",
+    )
+    parser.add_argument("--initial-epoch", type=int, default=None, help="Optional initial epoch override.")
+    parser.add_argument("--initial-step", type=int, default=None, help="Optional initial global-step override.")
+    parser.add_argument(
+        "--skip-until-initial-step",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Skip dataloader steps until initial_step is reached.",
     )
     parser.add_argument(
         "--base-weight",
@@ -584,6 +620,138 @@ def build_sample_prompt_item(prompt: str, settings: dict[str, Any], prompt_index
     }
 
 
+def get_resume_search_dirs(output_root: Path, job_name: str) -> list[Path]:
+    candidates = [output_root, output_root / job_name]
+    unique_dirs: list[Path] = []
+    seen: set[str] = set()
+    for path in candidates:
+        try:
+            resolved = str(path.resolve())
+        except FileNotFoundError:
+            resolved = str(path)
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        if path.exists() and path.is_dir():
+            unique_dirs.append(path)
+    return unique_dirs
+
+
+def read_train_state_metadata(state_dir: Path) -> tuple[int, int]:
+    train_state_file = state_dir / "train_state.json"
+    if train_state_file.exists():
+        try:
+            payload = json.loads(train_state_file.read_text(encoding="utf-8"))
+            return int(payload.get("current_step", 0)), int(payload.get("current_epoch", 0))
+        except Exception:
+            pass
+
+    step_match = re.match(r".*-step(\d{8})-state$", state_dir.name)
+    if step_match:
+        return int(step_match.group(1)), 0
+
+    epoch_match = re.match(r".*-(\d{6})-state$", state_dir.name)
+    if epoch_match:
+        return 0, int(epoch_match.group(1))
+
+    return 0, 0
+
+
+def find_latest_resume_state(output_root: Path, job_name: str) -> Path | None:
+    state_candidates: list[tuple[int, int, int, Path]] = []
+    step_pattern = re.compile(rf"^{re.escape(job_name)}-step\d{{8}}-state$")
+    epoch_pattern = re.compile(rf"^{re.escape(job_name)}-\d{{6}}-state$")
+    last_name = f"{job_name}-state"
+
+    for search_dir in get_resume_search_dirs(output_root, job_name):
+        for path in search_dir.iterdir():
+            if not path.is_dir():
+                continue
+            if path.name != last_name and not step_pattern.fullmatch(path.name) and not epoch_pattern.fullmatch(path.name):
+                continue
+            step_no, epoch_no = read_train_state_metadata(path)
+            state_candidates.append((step_no, epoch_no, path.stat().st_mtime_ns, path))
+
+    if not state_candidates:
+        return None
+
+    state_candidates.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
+    return state_candidates[0][3]
+
+
+def find_latest_network_weight(output_root: Path, job_name: str) -> Path | None:
+    weight_candidates: list[tuple[int, int, int, int, Path]] = []
+    step_pattern = re.compile(rf"^{re.escape(job_name)}-step(\d{{8}})(\.[^.]+)$")
+    epoch_pattern = re.compile(rf"^{re.escape(job_name)}-(\d{{6}})(\.[^.]+)$")
+
+    for search_dir in get_resume_search_dirs(output_root, job_name):
+        for path in search_dir.iterdir():
+            if not path.is_file() or path.suffix.lower() not in SUPPORTED_WEIGHT_EXTENSIONS:
+                continue
+
+            step_match = step_pattern.fullmatch(path.name)
+            if step_match:
+                weight_candidates.append((2, int(step_match.group(1)), 0, path.stat().st_mtime_ns, path))
+                continue
+
+            epoch_match = epoch_pattern.fullmatch(path.name)
+            if epoch_match:
+                weight_candidates.append((1, 0, int(epoch_match.group(1)), path.stat().st_mtime_ns, path))
+                continue
+
+            if path.stem == job_name:
+                weight_candidates.append((3, 0, 0, path.stat().st_mtime_ns, path))
+
+    if not weight_candidates:
+        return None
+
+    weight_candidates.sort(key=lambda item: (item[3], item[0], item[1], item[2]), reverse=True)
+    return weight_candidates[0][4]
+
+
+def resolve_auto_resume(settings: dict[str, Any], output_root: Path) -> dict[str, Any]:
+    result = {
+        "enabled": bool(settings.get("auto_resume", True)),
+        "mode": "disabled",
+        "resume_path": None,
+        "network_weights_path": None,
+        "dim_from_weights_auto_set": False,
+    }
+
+    if not result["enabled"]:
+        return result
+
+    if settings.get("resume"):
+        result["mode"] = "manual_resume"
+        result["resume_path"] = settings["resume"]
+        return result
+
+    if settings.get("network_weights"):
+        result["mode"] = "manual_network_weights"
+        result["network_weights_path"] = settings["network_weights"]
+        return result
+
+    latest_state_dir = find_latest_resume_state(output_root, settings["name"])
+    if latest_state_dir is not None:
+        settings["resume"] = str(latest_state_dir)
+        result["mode"] = "auto_resume_state"
+        result["resume_path"] = str(latest_state_dir)
+        return result
+
+    latest_weight = find_latest_network_weight(output_root, settings["name"])
+    if latest_weight is not None:
+        settings["network_weights"] = str(latest_weight)
+        if not settings.get("dim_from_weights", False):
+            settings["dim_from_weights"] = True
+            result["dim_from_weights_auto_set"] = True
+        result["mode"] = "auto_resume_weights"
+        result["network_weights_path"] = str(latest_weight)
+        return result
+
+    result["mode"] = "no_checkpoint_found"
+    return result
+
+
 def merge_settings(args: argparse.Namespace) -> dict[str, Any]:
     settings = dict(DEFAULTS)
     cli_overrides: set[str] = set()
@@ -684,6 +852,10 @@ def merge_settings(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError("validate_every_n_epochs must be >= 1 when provided")
     if settings["max_validation_steps"] is not None and settings["max_validation_steps"] < 1:
         raise ValueError("max_validation_steps must be >= 1 when provided")
+    if settings["initial_epoch"] is not None and settings["initial_epoch"] < 1:
+        raise ValueError("initial_epoch must be >= 1 when provided")
+    if settings["initial_step"] is not None and settings["initial_step"] < 0:
+        raise ValueError("initial_step must be >= 0 when provided")
     if settings["network_dropout"] is not None and not 0 <= settings["network_dropout"] <= 1:
         raise ValueError("network_dropout must be between 0 and 1 when provided")
     if settings["rank_dropout"] is not None and not 0 <= settings["rank_dropout"] < 1:
@@ -1039,6 +1211,17 @@ def build_command(settings: dict[str, Any], dataset_config_path: Path, sample_pr
                 ),
             ]
         )
+    if settings["resume"] is not None:
+        command.extend(
+            [
+                "--resume",
+                normalize_existing_path(
+                    settings["resume"],
+                    "Resume state",
+                    base_dir=get_base_dir_for_setting(settings, "resume"),
+                ),
+            ]
+        )
     if len(settings["base_weights"]) > 0:
         command.append("--base_weights")
         command.extend(
@@ -1065,8 +1248,13 @@ def build_command(settings: dict[str, Any], dataset_config_path: Path, sample_pr
     append_flag(command, "--vae_disable_cache", settings["vae_disable_cache"])
     append_flag(command, "--skip_cache_check", settings["skip_cache_check"])
     append_flag(command, "--dim_from_weights", settings["dim_from_weights"])
+    append_flag(command, "--save_state", settings["save_state"])
+    append_flag(command, "--save_state_on_train_end", settings["save_state_on_train_end"])
+    append_flag(command, "--skip_until_initial_step", settings["skip_until_initial_step"])
     append_flag(command, "--unsloth_offload_checkpointing", settings["unsloth_offload_checkpointing"])
     append_flag(command, "--cpu_offload_checkpointing", settings["cpu_offload_checkpointing"])
+    append_arg(command, "--initial_epoch", settings["initial_epoch"])
+    append_arg(command, "--initial_step", settings["initial_step"])
     if settings["extra_args"]:
         command.extend(str(item) for item in settings["extra_args"])
 
@@ -1094,6 +1282,12 @@ def main() -> int:
     output_root.mkdir(parents=True, exist_ok=True)
     job_root = output_root / settings["name"]
     job_root.mkdir(parents=True, exist_ok=True)
+    auto_resume_result = resolve_auto_resume(settings, output_root)
+    if auto_resume_result["mode"] == "auto_resume_state":
+        print(f"Auto-resume: using latest state {auto_resume_result['resume_path']}")
+    elif auto_resume_result["mode"] == "auto_resume_weights":
+        extra = " (dim_from_weights enabled)" if auto_resume_result["dim_from_weights_auto_set"] else ""
+        print(f"Auto-resume: using latest LoRA weights {auto_resume_result['network_weights_path']}{extra}")
 
     image_dirs, dataset_root = collect_plain_dataset(settings)
 
@@ -1117,6 +1311,9 @@ def main() -> int:
         "decode_images": bool(settings["decode_images"]),
         "decode_mode": "stream" if settings["decode_images"] else "plain",
         "decoded_dataset_written_to_disk": False,
+        "auto_resume": auto_resume_result,
+        "resume_used": settings.get("resume"),
+        "network_weights_used": settings.get("network_weights"),
         "sample_prompts_path": str(sample_prompts_path) if sample_prompts_path is not None else None,
         "batch_size": int(settings["batch_size"]),
         "gradient_accumulation_steps": int(settings["gradient_accumulation_steps"]),

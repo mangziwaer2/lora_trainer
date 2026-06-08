@@ -10,18 +10,18 @@ output: /kaggle/working/output
 
 trigger_word: null
 steps: 4000
-batch_size: 1
-gradient_accumulation: 4
+batch_size: 4
+gradient_accumulation: 2
 lr: 0.00005
 optimizer: adamw8bit
 save_every: 100
-max_step_saves_to_keep: 15
+max_step_saves_to_keep: 25
 save_best_model: true
 sample_every: 1000
 cache_latents: false
 
-rank: 32
-conv_rank: 16
+rank: 64
+conv_rank: 24
 resolution:
   - 512
   - 768
