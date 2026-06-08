@@ -1,4 +1,4 @@
-name: anima_lora
+name: anima_lora_small_dataset
 
 # Relative paths are resolved from this config file's folder.
 # Minimum required changes for a new machine:
@@ -7,39 +7,31 @@ name: anima_lora
 # 3. qwen3
 # 4. vae
 dataset: /root/autodl-tmp/trainer/lora_trainer/datasets
-model: /root/autodl-tmp/trainer/lora_trainer/models/BASBetterAnimeStylePlusAnima_baseV10.safetensors
+model: /root/autodl-tmp/trainer/lora_trainer/models/anima-base-v1.0.safetensors
 qwen3: /root/autodl-tmp/trainer/lora_trainer/models/qwen3/model.safetensors
 vae: /root/autodl-tmp/trainer/lora_trainer/models/qwen_image_vae.safetensors
 output: /root/autodl-tmp/output-anima
 
-# Optional if your Anima base checkpoint does not already contain the LLM adapter.
-# llm_adapter_path: /path/to/llm_adapter.safetensors
-
-# Optional. If omitted, train_anima.py auto-detects ../vendor/sd-scripts first.
-# sd_scripts_root: ../vendor/sd-scripts
-# Optional. If omitted, this script uses the current Python environment.
-# sd_scripts_python: ../.venv/Scripts/python.exe
-
-# Same style as SDXL config where possible.
-# For cloud 4090, prefer controlling total training by steps.
-# Do not set both steps and max_train_epochs unless you intentionally want step-based control.
-steps: 4000
-batch_size: 4
-gradient_accumulation: 2
-lr: 0.0001
+# Small-dataset preset:
+# - bias toward stability over peak fit
+# - intended for roughly tens of images, not hundreds
+steps: 1200
+batch_size: 1
+gradient_accumulation: 4
+lr: 2e-5
 optimizer: AdamW8bit
 save_every: 100
 
-# Anima still uses dataset repeats, unlike the SDXL wrapper in this repo.
-# This changes epoch length, not effective batch size.
+# Keep repeats low for tiny datasets to avoid overcooking early.
 num_repeats: 1
 
-# LoRA rank. Alias of network_dim.
-rank: 32
+# Lower rank is usually safer on very small datasets.
+rank: 8
+# network_alpha: 8
 
-# Anima-specific training settings that usually do not need frequent changes.
 resolution: 1024
 caption_ext: txt
+caption_dropout_rate: 0.1
 decode_images: true
 decode_key: 123456789
 allow_lossy_extensions: false
@@ -47,7 +39,7 @@ allow_lossy_extensions: false
 enable_bucket: true
 bucket_reso_steps: 64
 min_bucket_reso: 512
-max_bucket_reso: 1664
+max_bucket_reso: 1536
 bucket_no_upscale: false
 flip_aug: false
 shuffle_caption: false
@@ -58,41 +50,36 @@ low_vram: false
 gradient_checkpointing: true
 cache_latents: true
 cache_text_encoder_outputs: true
-
-# Keep this enabled with cache_text_encoder_outputs to avoid text-side training conflicts.
 network_train_unet_only: true
 
 seed: 42
 lr_scheduler: constant
 timestep_sampling: sigmoid
 discrete_flow_shift: 1.0
+sigmoid_scale: 1.0
+weighting_scheme: uniform
+
+# Keep the adapter frozen unless you have a specific reason.
+# llm_adapter_lr: 0.0
 
 sample_every: 100
 sample_prompts:
-  - 1girl, anime coloring, dress, pussy,skirt lift, posing, embarrassed, thighhighs,park,nose blush,open mouth,exhibitionism,being watched by multiple others,
+  - 1girl, anime coloring, park,dress,thighhighs,posing,
 sample_neg: ""
 sample_width: 1024
 sample_height: 1024
 sample_steps: 8
 sample_seed: 42
 guidance_scale: 1.0
-walk_seed: true
+walk_seed: false
+sample_flow_shift: 3.0
 
-# Optional epoch-based control. Leave commented when using steps.
-# max_train_epochs: 20
-# save_every_n_epochs: 1
-
-# Optional tuning knobs.
-# network_alpha: 16
-# vae_chunk_size: 64
-# vae_disable_cache: true
-# t5_tokenizer_path: ../vendor/sd-scripts/configs/t5_old
-
-# Extra raw arguments appended to anima_train_network.py if needed.
-# extra_args:
-#   - --sample_every_n_steps
-#   - "1000"
+# Optional validation:
+# validation_split: 0.1
+# validation_seed: 42
+# validate_every_n_steps: 200
+# max_validation_steps: 16
 
 # Optional outputs/debug.
-# command_path: ../outputs/anima_lora/anima_launch_command.json
+# command_path: ../outputs/anima_lora_small_dataset/anima_launch_command.json
 # write_config_only: true
