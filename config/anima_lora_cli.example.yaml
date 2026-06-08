@@ -35,7 +35,7 @@ save_every: 100
 num_repeats: 1
 
 # LoRA rank. Alias of network_dim.
-rank: 16
+rank: 32
 
 # Anima-specific training settings that usually do not need frequent changes.
 resolution: 1024
@@ -66,6 +66,17 @@ seed: 42
 lr_scheduler: constant
 timestep_sampling: sigmoid
 discrete_flow_shift: 1.0
+
+sample_every: 100
+sample_prompts:
+  - 1girl, anime coloring, dress, sfw, posing, embarrassed, thighhighs
+sample_neg: ""
+sample_width: 1024
+sample_height: 1024
+sample_steps: 8
+sample_seed: 42
+guidance_scale: 1.0
+walk_seed: true
 
 # Optional epoch-based control. Leave commented when using steps.
 # max_train_epochs: 20

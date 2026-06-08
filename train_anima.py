@@ -72,6 +72,18 @@ DEFAULTS: dict[str, Any] = {
     "t5_tokenizer_path": None,
     "extra_args": [],
     "command_path": None,
+    "sample_every": None,
+    "sample_prompts": [],
+    "sample_prompts_file": None,
+    "sample_neg": "",
+    "sample_width": 1024,
+    "sample_height": 1024,
+    "sample_steps": 20,
+    "guidance_scale": 6.0,
+    "sample_seed": 42,
+    "sample_flow_shift": 3.0,
+    "sample_at_first": False,
+    "disable_sampling": False,
 }
 
 
@@ -222,6 +234,18 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--save-model-as", "--save-format", dest="save_model_as", default=None, choices=["safetensors", "ckpt", "pt"], help="Output format.")
     parser.add_argument("--command-path", default=None, help="Optional path to write the generated launch command JSON.")
+    parser.add_argument("--sample-every", type=int, default=None, help="Generate sample images every N steps.")
+    parser.add_argument("--sample-prompt", dest="sample_prompts", action="append", default=None, help="Repeat to add sample prompts.")
+    parser.add_argument("--sample-prompts-file", default=None, help="Optional text/json/toml prompt file passed to sd-scripts.")
+    parser.add_argument("--sample-neg", default=None, help="Negative prompt used for generated samples.")
+    parser.add_argument("--sample-width", type=int, default=None, help="Sample image width.")
+    parser.add_argument("--sample-height", type=int, default=None, help="Sample image height.")
+    parser.add_argument("--sample-steps", type=int, default=None, help="Sample inference steps.")
+    parser.add_argument("--guidance-scale", type=float, default=None, help="CFG scale for sampling.")
+    parser.add_argument("--sample-seed", type=int, default=None, help="Seed used for sample generation.")
+    parser.add_argument("--sample-flow-shift", type=float, default=None, help="Flow shift used for sample generation.")
+    parser.add_argument("--sample-at-first", action="store_true", default=None, help="Generate samples before training starts.")
+    parser.add_argument("--disable-sampling", action="store_true", default=None, help="Disable sample generation.")
     parser.add_argument("--write-config-only", action="store_true", default=None, help="Only write generated config files and exit.")
     return parser.parse_args()
 
@@ -318,6 +342,12 @@ def merge_settings(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError("num_cpu_threads_per_process must be >= 1")
     if not isinstance(settings["extra_args"], list):
         raise ValueError("extra_args must be a list of strings")
+    if settings["sample_every"] is not None and settings["sample_every"] < 1:
+        raise ValueError("sample_every must be >= 1 when provided")
+    if settings["sample_width"] < 64 or settings["sample_height"] < 64:
+        raise ValueError("sample_width and sample_height must be >= 64")
+    if settings["sample_steps"] < 1:
+        raise ValueError("sample_steps must be >= 1")
 
     return settings
 
@@ -411,6 +441,44 @@ def collect_plain_dataset(settings: dict[str, Any]) -> tuple[list[Path], Path]:
     return image_dirs, source_root
 
 
+def load_sample_prompts(settings: dict[str, Any]) -> list[str]:
+    prompts = list(settings.get("sample_prompts", []))
+    if prompts is None:
+        return []
+    return prompts
+
+
+def build_sample_prompts_path(settings: dict[str, Any], job_root: Path) -> Path | None:
+    if settings["disable_sampling"]:
+        return None
+
+    sample_prompts_file = settings.get("sample_prompts_file")
+    if sample_prompts_file:
+        return resolve_path(sample_prompts_file, base_dir=get_base_dir_for_setting(settings, "sample_prompts_file"))
+
+    prompts = load_sample_prompts(settings)
+    if len(prompts) == 0:
+        return None
+
+    payload = []
+    for prompt in prompts:
+        item = {
+            "prompt": prompt,
+            "negative_prompt": settings["sample_neg"],
+            "width": int(settings["sample_width"]),
+            "height": int(settings["sample_height"]),
+            "sample_steps": int(settings["sample_steps"]),
+            "scale": float(settings["guidance_scale"]),
+            "seed": int(settings["sample_seed"]) if settings["sample_seed"] is not None else None,
+            "flow_shift": float(settings["sample_flow_shift"]),
+        }
+        payload.append(item)
+
+    prompts_path = job_root / "anima_sample_prompts.json"
+    prompts_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    return prompts_path
+
+
 def build_dataset_config(settings: dict[str, Any], image_dirs: list[Path], output_path: Path) -> Path:
     dataset_config = {
         "general": {
@@ -444,7 +512,7 @@ def build_dataset_config(settings: dict[str, Any], image_dirs: list[Path], outpu
     return output_path
 
 
-def build_command(settings: dict[str, Any], dataset_config_path: Path) -> tuple[list[str], Path]:
+def build_command(settings: dict[str, Any], dataset_config_path: Path, sample_prompts_path: Path | None) -> tuple[list[str], Path]:
     sd_scripts_root = resolve_sd_scripts_root(
         settings.get("sd_scripts_root"),
         base_dir=get_base_dir_for_setting(settings, "sd_scripts_root"),
@@ -535,6 +603,12 @@ def build_command(settings: dict[str, Any], dataset_config_path: Path) -> tuple[
         command.extend(["--save_every_n_steps", str(int(settings["save_every_n_steps"]))])
     elif settings["max_train_epochs"] is not None and settings["save_every_n_epochs"] is not None:
         command.extend(["--save_every_n_epochs", str(int(settings["save_every_n_epochs"]))])
+    if sample_prompts_path is not None:
+        command.extend(["--sample_prompts", str(sample_prompts_path)])
+        if settings["sample_every"] is not None:
+            command.extend(["--sample_every_n_steps", str(int(settings["sample_every"]))])
+        if settings["sample_at_first"]:
+            command.append("--sample_at_first")
     if settings["llm_adapter_path"] is not None:
         command.extend(
             [
@@ -600,7 +674,8 @@ def main() -> int:
     image_dirs, dataset_root = collect_plain_dataset(settings)
 
     dataset_config_path = build_dataset_config(settings, image_dirs, job_root / "anima_dataset_config.toml")
-    command, workdir = build_command(settings, dataset_config_path)
+    sample_prompts_path = build_sample_prompts_path(settings, job_root)
+    command, workdir = build_command(settings, dataset_config_path, sample_prompts_path)
 
     command_path = (
         resolve_path(settings["command_path"], base_dir=get_base_dir_for_setting(settings, "command_path"))
@@ -618,6 +693,7 @@ def main() -> int:
         "decode_images": bool(settings["decode_images"]),
         "decode_mode": "stream" if settings["decode_images"] else "plain",
         "decoded_dataset_written_to_disk": False,
+        "sample_prompts_path": str(sample_prompts_path) if sample_prompts_path is not None else None,
         "batch_size": int(settings["batch_size"]),
         "gradient_accumulation_steps": int(settings["gradient_accumulation_steps"]),
         "effective_batch_size_single_process": int(settings["batch_size"]) * int(settings["gradient_accumulation_steps"]),

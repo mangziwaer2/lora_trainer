@@ -1,20 +1,20 @@
 name: sdxl_lora
 
 # Relative paths are resolved from this config file's folder.
-dataset: ../datasets/sdxl_encoded
-model: /path/to/sdxl_base_model.safetensors
-output: ../outputs
+dataset: /kaggle/input/datasets/mangziwaer2/loradataset/lora_enc
+model: /kaggle/input/models/skillfi490/wai-illustrious-v16/other/default/1/WAI_NSFW-illustrious16.safetensors
+output: /kaggle/working/output
 
 # Optional writable cache dir. If omitted, the CLI defaults to <output>/<name>/dataset_cache.
 # dataset_cache_dir: ../outputs/sdxl_lora/dataset_cache
 
 trigger_word: null
-steps: 20000
+steps: 4000
 batch_size: 1
-gradient_accumulation: 2
+gradient_accumulation: 4
 lr: 0.0001
 optimizer: adamw8bit
-save_every: 1000
+save_every: 100
 max_step_saves_to_keep: 15
 save_best_model: true
 sample_every: 1000
