@@ -232,6 +232,23 @@ def decode_image_simple(enc_path: str, key: int) -> Image.Image:
     return Image.fromarray(decoded.astype(np.uint8))
 
 
+def is_image_readable(image_path: str, decode_images: bool = False, decode_key: int = 123456789) -> bool:
+    try:
+        if decode_images:
+            image = decode_image_simple(image_path, decode_key)
+            try:
+                _ = np.array(image, np.uint8)
+            finally:
+                image.close()
+        else:
+            with Image.open(image_path) as image:
+                image.load()
+        return True
+    except Exception as e:
+        logger.warning(f"skip unreadable image: {image_path}, error: {e}")
+        return False
+
+
 class BucketManager:
     def __init__(self, no_upscale, max_reso, min_size, max_size, reso_steps) -> None:
         if max_size is not None:
@@ -2092,6 +2109,22 @@ class DreamBoothDataset(BaseDataset):
             else:
                 img_paths = glob_images(subset.image_dir, "*")
                 sizes: List[Optional[Tuple[int, int]]] = [None] * len(img_paths)
+
+                readable_img_paths = []
+                readable_sizes: List[Optional[Tuple[int, int]]] = []
+                skipped_corrupted = 0
+                for img_path, size in zip(img_paths, sizes):
+                    if is_image_readable(img_path, subset.decode_images, subset.decode_key):
+                        readable_img_paths.append(img_path)
+                        readable_sizes.append(size)
+                    else:
+                        skipped_corrupted += 1
+                if skipped_corrupted > 0:
+                    logger.warning(
+                        f"skipped {skipped_corrupted} unreadable/corrupted images from {subset.image_dir}"
+                    )
+                img_paths = readable_img_paths
+                sizes = readable_sizes
 
                 # new caching: get image size from cache files
                 strategy = LatentsCachingStrategy.get_strategy()
