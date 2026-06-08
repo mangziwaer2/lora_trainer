@@ -6,11 +6,11 @@ name: anima_lora
 # 2. model
 # 3. qwen3
 # 4. vae
-dataset: /kaggle/input/datasets/mangziwaer2/loradataset/lora_enc
-model: /kaggle/input/models/mangziwaer2/abase/pytorch/default/1/BASBetterAnimeStylePlusAnima_baseV10.safetensors
-qwen3: /kaggle/input/models/qwen-lm/qwen-3/transformers/0.6b-base/1/model.safetensors
-vae: /kaggle/input/models/mangziwaer2/abase/pytorch/default/1/qwen_image_vae.safetensors
-output: /kaggle/working/output
+dataset: /root/autodl-tmp/trainer/lora_trainer/datasets
+model: /root/autodl-tmp/trainer/lora_trainer/models/BASBetterAnimeStylePlusAnima_baseV10.safetensors
+qwen3: /root/autodl-tmp/trainer/lora_trainer/models/qwen3/model.safetensors
+vae: /root/autodl-tmp/trainer/lora_trainer/models/qwen_image_vae.safetensors
+output: /root/autodl-tmp/output-anima
 
 # Optional if your Anima base checkpoint does not already contain the LLM adapter.
 # llm_adapter_path: /path/to/llm_adapter.safetensors
@@ -24,8 +24,8 @@ output: /kaggle/working/output
 # For cloud 4090, prefer controlling total training by steps.
 # Do not set both steps and max_train_epochs unless you intentionally want step-based control.
 steps: 4000
-batch_size: 1
-gradient_accumulation: 4
+batch_size: 4
+gradient_accumulation: 2
 lr: 0.0001
 optimizer: AdamW8bit
 save_every: 100
@@ -69,7 +69,7 @@ discrete_flow_shift: 1.0
 
 sample_every: 100
 sample_prompts:
-  - 1girl, anime coloring, dress, sfw, posing, embarrassed, thighhighs
+  - 1girl, anime coloring, dress, pussy,skirt lift, posing, embarrassed, thighhighs,park,nose blush,open mouth,exhibitionism,being watched by multiple others,
 sample_neg: ""
 sample_width: 1024
 sample_height: 1024
