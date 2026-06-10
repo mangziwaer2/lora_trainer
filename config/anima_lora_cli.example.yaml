@@ -1,4 +1,4 @@
-name: anima_aPV1
+name: anima_aPV4
 
 # Relative paths are resolved from this config file's folder.
 # Minimum required changes for a new machine:
@@ -6,28 +6,29 @@ name: anima_aPV1
 # 2. model
 # 3. qwen3
 # 4. vae
-dataset: /root/autodl-tmp/trainer/lora_trainer/datasets
-model: /root/autodl-tmp/trainer/lora_trainer/models/BASBetterAnimeStylePlusAnima_baseV10.safetensors
+dataset: /root/autodl-tmp/trainer/lora_trainer/lora_enc
+model: /root/autodl-tmp/trainer/lora_trainer/models/anima-base-v1.0.safetensors
 qwen3: /root/autodl-tmp/trainer/lora_trainer/models/qwen3/model.safetensors
 vae: /root/autodl-tmp/trainer/lora_trainer/models/qwen_image_vae.safetensors
-output: /root/autodl-tmp/output-anima
+output: /root/autodl-tmp/output-anima2
 
 # Small-dataset preset:
 # - bias toward stability over peak fit
 # - intended for roughly tens of images, not hundreds
-steps: 4000
+steps: 20000
 batch_size: 4
-gradient_accumulation: 2
-lr: 5e-5
+gradient_accumulation: 5
+lr: 2e-5
 optimizer: AdamW8bit
 save_every: 100
-
+save_state: true
+save_state_on_train_end: true
 # Keep repeats low for tiny datasets to avoid overcooking early.
-num_repeats: 1
+num_repeats: 5
 
 # Lower rank is usually safer on very small datasets.
 rank: 32
-# network_alpha: 8
+network_alpha: 32
 
 resolution: 1024
 caption_ext: txt
@@ -64,13 +65,13 @@ weighting_scheme: uniform
 
 sample_every: 100
 sample_prompts:
-  - 1girl, anime coloring, park,dress,thighhighs,posing,skirt lift,pussy,
+  - 1girl, anime coloring, park,dress,thighhighs,posing,sfw,
 sample_neg: ""
 sample_width: 1024
-sample_height: 1024
-sample_steps: 8
+sample_height: 1536
+sample_steps: 30
 sample_seed: 42
-guidance_scale: 1.0
+guidance_scale: 4.0
 walk_seed: false
 sample_flow_shift: 3.0
 

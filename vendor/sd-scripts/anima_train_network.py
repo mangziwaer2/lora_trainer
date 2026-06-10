@@ -75,9 +75,9 @@ class AnimaNetworkTrainer(train_network.NetworkTrainer):
                 args.blocks_to_swap is None or args.blocks_to_swap == 0
             ), "blocks_to_swap is not supported with unsloth_offload_checkpointing"
 
-        train_dataset_group.verify_bucket_reso_steps(16)  # WanVAE spatial downscale = 8 and patch size = 2
+        train_dataset_group.verify_bucket_reso_steps(8)
         if val_dataset_group is not None:
-            val_dataset_group.verify_bucket_reso_steps(16)
+            val_dataset_group.verify_bucket_reso_steps(8)
 
     def load_target_model(self, args, weight_dtype, accelerator):
         self.is_swapping_blocks = args.blocks_to_swap is not None and args.blocks_to_swap > 0
@@ -181,15 +181,18 @@ class AnimaNetworkTrainer(train_network.NetworkTrainer):
             logger.info("move text encoder to gpu")
             text_encoders[0].to(accelerator.device)
 
+            tokenize_strategy = strategy_base.TokenizeStrategy.get_strategy()
+            text_encoding_strategy = strategy_base.TextEncodingStrategy.get_strategy()
+            if hasattr(text_encoding_strategy, "cache_uncond_embeddings"):
+                logger.info("cache unconditional embeddings for caption dropout")
+                text_encoding_strategy.cache_uncond_embeddings(tokenize_strategy, text_encoders)
+
             with accelerator.autocast():
                 dataset.new_cache_text_encoder_outputs(text_encoders, accelerator)
 
             # cache sample prompts
             if args.sample_prompts is not None:
                 logger.info(f"cache Text Encoder outputs for sample prompts: {args.sample_prompts}")
-
-                tokenize_strategy = strategy_base.TokenizeStrategy.get_strategy()
-                text_encoding_strategy = strategy_base.TextEncodingStrategy.get_strategy()
 
                 prompts = train_util.load_prompts(args.sample_prompts)
                 sample_prompts_te_outputs = {}

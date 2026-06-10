@@ -1,9 +1,9 @@
-name: sdxl_lora
+name: APV9
 
 # Relative paths are resolved from this config file's folder.
-dataset: /kaggle/input/datasets/mangziwaer2/loradataset/lora_enc
-model: /kaggle/input/models/skillfi490/wai-illustrious-v16/other/default/1/WAI_NSFW-illustrious16.safetensors
-output: /kaggle/working/output
+dataset: /root/autodl-tmp/trainer/lora_trainer/lora_enc
+model: /root/autodl-tmp/trainer/lora_trainer/models/wai.safetensors
+output: /root/autodl-tmp/output-sdxl
 
 # Optional writable cache dir. If omitted, the CLI defaults to <output>/<name>/dataset_cache.
 # dataset_cache_dir: ../outputs/sdxl_lora/dataset_cache
@@ -11,17 +11,17 @@ output: /kaggle/working/output
 trigger_word: null
 steps: 4000
 batch_size: 4
-gradient_accumulation: 2
+gradient_accumulation: 4
 lr: 0.00005
 optimizer: adamw8bit
 save_every: 100
-max_step_saves_to_keep: 25
+max_step_saves_to_keep: 30
 save_best_model: true
-sample_every: 1000
+sample_every: 100
 cache_latents: false
 
 rank: 64
-conv_rank: 24
+conv_rank: 32
 resolution:
   - 512
   - 768

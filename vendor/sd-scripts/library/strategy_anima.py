@@ -78,6 +78,10 @@ class AnimaTextEncodingStrategy(TextEncodingStrategy):
 
     def __init__(self) -> None:
         super().__init__()
+        self._uncond_prompt_embeds = None
+        self._uncond_attn_mask = None
+        self._uncond_t5_input_ids = None
+        self._uncond_t5_attn_mask = None
 
     def encode_tokens(
         self, tokenize_strategy: TokenizeStrategy, models: List[Any], tokens: List[torch.Tensor]
@@ -134,18 +138,43 @@ class AnimaTextEncodingStrategy(TextEncodingStrategy):
 
         for i in range(prompt_embeds.shape[0]):
             if random.random() < caption_dropout_rates[i].item():
-                # Use pre-cached unconditional embeddings
-                prompt_embeds[i] = 0
+                # Use cached unconditional embeddings to match Anima-Standalone-Trainer behavior.
+                if self._uncond_prompt_embeds is not None:
+                    prompt_embeds[i] = self._uncond_prompt_embeds
+                else:
+                    prompt_embeds[i] = 0
                 if attn_mask is not None:
-                    attn_mask[i] = 0
+                    if self._uncond_attn_mask is not None:
+                        attn_mask[i] = self._uncond_attn_mask
+                    else:
+                        attn_mask[i] = 0
                 if t5_input_ids is not None:
-                    t5_input_ids[i, 0] = 1  # Set to </s> token ID
-                    t5_input_ids[i, 1:] = 0
+                    if self._uncond_t5_input_ids is not None:
+                        t5_input_ids[i] = self._uncond_t5_input_ids
+                    else:
+                        t5_input_ids[i, 0] = 1
+                        t5_input_ids[i, 1:] = 0
                 if t5_attn_mask is not None:
-                    t5_attn_mask[i, 0] = 1
-                    t5_attn_mask[i, 1:] = 0
+                    if self._uncond_t5_attn_mask is not None:
+                        t5_attn_mask[i] = self._uncond_t5_attn_mask
+                    else:
+                        t5_attn_mask[i, 0] = 1
+                        t5_attn_mask[i, 1:] = 0
 
         return [prompt_embeds, attn_mask, t5_input_ids, t5_attn_mask]
+
+    def cache_uncond_embeddings(self, tokenize_strategy: TokenizeStrategy, models: List[Any]) -> None:
+        """Cache unconditional embeddings used by caption dropout for cached TE outputs."""
+        tokens_and_masks = tokenize_strategy.tokenize("")
+        with torch.no_grad():
+            prompt_embeds, attn_mask, t5_input_ids, t5_attn_mask = self.encode_tokens(
+                tokenize_strategy, models, tokens_and_masks
+            )
+
+        self._uncond_prompt_embeds = prompt_embeds[0].detach().cpu()
+        self._uncond_attn_mask = attn_mask[0].detach().cpu() if attn_mask is not None else None
+        self._uncond_t5_input_ids = t5_input_ids[0].detach().cpu() if t5_input_ids is not None else None
+        self._uncond_t5_attn_mask = t5_attn_mask[0].detach().cpu() if t5_attn_mask is not None else None
 
 
 class AnimaTextEncoderOutputsCachingStrategy(TextEncoderOutputsCachingStrategy):
