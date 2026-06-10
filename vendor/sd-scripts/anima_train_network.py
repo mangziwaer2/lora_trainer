@@ -14,7 +14,6 @@ from library import (
     anima_models,
     anima_train_utils,
     anima_utils,
-    flux_train_utils,
     qwen_image_autoencoder_kl,
     sd3_train_utils,
     strategy_anima,
@@ -23,6 +22,7 @@ from library import (
 )
 import train_network
 from library.utils import setup_logging
+from library.custom_train_functions import apply_masked_loss
 
 setup_logging()
 import logging
@@ -41,6 +41,9 @@ class AnimaNetworkTrainer(train_network.NetworkTrainer):
         train_dataset_group: Union[train_util.DatasetGroup, train_util.MinimalDataset],
         val_dataset_group: Optional[train_util.DatasetGroup],
     ):
+        if getattr(args, "timestep_sample_method", None) is not None:
+            args.timestep_sampling = "sigmoid" if args.timestep_sample_method == "logit_normal" else args.timestep_sample_method
+
         if args.fp8_base or args.fp8_base_unet:
             logger.warning("fp8_base and fp8_base_unet are not supported. / fp8_baseとfp8_base_unetはサポートされていません。")
             args.fp8_base = False
@@ -89,8 +92,11 @@ class AnimaNetworkTrainer(train_network.NetworkTrainer):
 
         # Load VAE
         logger.info("Loading Anima VAE...")
-        vae = qwen_image_autoencoder_kl.load_vae(
-            args.vae, device="cpu", disable_mmap=True, spatial_chunk_size=args.vae_chunk_size, disable_cache=args.vae_disable_cache
+        vae = anima_utils.load_anima_vae(
+            args.vae,
+            device="cpu",
+            disable_cache=args.vae_disable_cache,
+            chunk_size=args.vae_chunk_size,
         )
         vae.to(weight_dtype)
         vae.eval()
@@ -110,14 +116,13 @@ class AnimaNetworkTrainer(train_network.NetworkTrainer):
 
         # Load DiT
         logger.info(f"Loading Anima DiT model with attn_mode={attn_mode}, split_attn: {args.split_attn}...")
-        model = anima_utils.load_anima_model(
-            accelerator.device,
+        model = anima_utils.load_anima_dit(
             args.pretrained_model_name_or_path,
-            attn_mode,
-            args.split_attn,
-            loading_device,
-            loading_dtype,
-            args.fp8_scaled,
+            device=loading_device,
+            attn_mode=attn_mode,
+            split_attn=args.split_attn,
+            dtype=loading_dtype,
+            fp8_scaled=args.fp8_scaled,
         )
 
         # Store unsloth preference so that when the base NetworkTrainer calls
@@ -276,8 +281,8 @@ class AnimaNetworkTrainer(train_network.NetworkTrainer):
         noise = torch.randn_like(latents)
 
         # Get noisy model input and timesteps
-        noisy_model_input, timesteps, sigmas = flux_train_utils.get_noisy_model_input_and_timesteps(
-            args, noise_scheduler, latents, noise, accelerator.device, weight_dtype
+        noisy_model_input, timesteps, sigmas = anima_train_utils.get_noisy_model_input_and_timesteps(
+            args, latents, noise, accelerator.device, weight_dtype
         )
         timesteps = timesteps / 1000.0  # scale to [0, 1] range. timesteps is float32
 
@@ -345,39 +350,89 @@ class AnimaNetworkTrainer(train_network.NetworkTrainer):
         train_text_encoder=True,
         train_unet=True,
     ) -> torch.Tensor:
-        """Override base process_batch for caption dropout with cached text encoder outputs."""
+        """Anima-specific batch processing aligned more closely with Anima-Standalone-Trainer."""
 
-        # Text encoder conditions
+        with torch.no_grad():
+            if "latents" in batch and batch["latents"] is not None:
+                latents = batch["latents"].to(accelerator.device)
+            else:
+                if args.vae_batch_size is None or len(batch["images"]) <= args.vae_batch_size:
+                    latents = self.encode_images_to_latents(args, vae, batch["images"].to(accelerator.device, dtype=vae_dtype))
+                else:
+                    chunks = [batch["images"][i : i + args.vae_batch_size] for i in range(0, len(batch["images"]), args.vae_batch_size)]
+                    latents = torch.cat(
+                        [
+                            self.encode_images_to_latents(args, vae, chunk.to(accelerator.device, dtype=vae_dtype))
+                            for chunk in chunks
+                        ],
+                        dim=0,
+                    )
+
+                if torch.any(torch.isnan(latents)):
+                    accelerator.print("NaN found in latents, replacing with zeros")
+                    latents = torch.nan_to_num(latents, 0, out=latents)
+
+            latents = self.shift_scale_latents(args, latents)
+
+        text_encoder_conds = []
         text_encoder_outputs_list = batch.get("text_encoder_outputs_list", None)
         anima_text_encoding_strategy: strategy_anima.AnimaTextEncodingStrategy = text_encoding_strategy
         if text_encoder_outputs_list is not None:
             caption_dropout_rates = text_encoder_outputs_list[-1]
             text_encoder_outputs_list = text_encoder_outputs_list[:-1]
-
-            # Apply caption dropout to cached outputs
             text_encoder_outputs_list = anima_text_encoding_strategy.drop_cached_text_encoder_outputs(
                 *text_encoder_outputs_list, caption_dropout_rates=caption_dropout_rates
             )
-            # Add the caption dropout rates back to the list for validation dataset (which is re-used batch items)
             batch["text_encoder_outputs_list"] = text_encoder_outputs_list + [caption_dropout_rates]
+            text_encoder_conds = text_encoder_outputs_list
 
-        return super().process_batch(
+        if len(text_encoder_conds) == 0 or text_encoder_conds[0] is None or train_text_encoder:
+            with torch.set_grad_enabled(is_train and train_text_encoder), accelerator.autocast():
+                input_ids = [ids.to(accelerator.device) for ids in batch["input_ids_list"]]
+                encoded_text_encoder_conds = text_encoding_strategy.encode_tokens(
+                    tokenize_strategy,
+                    self.get_models_for_text_encoding(args, accelerator, text_encoders),
+                    input_ids,
+                )
+                if args.full_fp16:
+                    encoded_text_encoder_conds = [c.to(weight_dtype) for c in encoded_text_encoder_conds]
+
+            if len(text_encoder_conds) == 0:
+                text_encoder_conds = encoded_text_encoder_conds
+            else:
+                for i in range(len(encoded_text_encoder_conds)):
+                    if encoded_text_encoder_conds[i] is not None:
+                        text_encoder_conds[i] = encoded_text_encoder_conds[i]
+
+        noise_pred, target, timesteps, weighting = self.get_noise_pred_and_target(
+            args,
+            accelerator,
+            noise_scheduler,
+            latents,
             batch,
-            text_encoders,
+            text_encoder_conds,
             unet,
             network,
-            vae,
-            noise_scheduler,
-            vae_dtype,
             weight_dtype,
-            accelerator,
-            args,
-            text_encoding_strategy,
-            tokenize_strategy,
-            is_train,
-            train_text_encoder,
             train_unet,
+            is_train=is_train,
         )
+
+        huber_c = train_util.get_huber_threshold_if_needed(args, timesteps, noise_scheduler)
+        loss = train_util.conditional_loss(noise_pred.float(), target.float(), args.loss_type, "none", huber_c)
+        if weighting is not None:
+            if isinstance(weighting, torch.Tensor) and weighting.ndim == 1:
+                weighting = weighting.view(-1, *([1] * (loss.ndim - 1)))
+            loss = loss * weighting
+
+        if args.masked_loss or ("alpha_masks" in batch and batch["alpha_masks"] is not None):
+            loss = apply_masked_loss(loss, batch)
+
+        loss = loss.mean(dim=list(range(1, loss.ndim)))
+        loss_weights = batch["loss_weights"]
+        loss = loss * loss_weights
+        loss = self.post_process_loss(loss, args, timesteps, noise_scheduler)
+        return loss.mean()
 
     def post_process_loss(self, loss, args, timesteps, noise_scheduler):
         return loss

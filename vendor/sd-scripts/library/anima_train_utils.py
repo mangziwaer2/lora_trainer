@@ -15,6 +15,7 @@ from PIL import Image
 
 from library.device_utils import init_ipex, clean_memory_on_device, synchronize_device
 from library import anima_models, anima_utils, train_util, qwen_image_autoencoder_kl
+from library.sd3_train_utils import FlowMatchEulerDiscreteScheduler
 
 init_ipex()
 
@@ -105,6 +106,13 @@ def add_anima_training_arguments(parser: argparse.ArgumentParser):
         help="Timestep sampling method (default: sigmoid (logit normal))",
     )
     parser.add_argument(
+        "--timestep_sample_method",
+        type=str,
+        default=None,
+        choices=["logit_normal", "uniform"],
+        help="Anima-Standalone-Trainer compatible timestep sampling method.",
+    )
+    parser.add_argument(
         "--sigmoid_scale",
         type=float,
         default=1.0,
@@ -155,6 +163,52 @@ def compute_loss_weighting_for_anima(weighting_scheme: str, sigmas: torch.Tensor
     else:
         weighting = torch.ones_like(sigmas)
     return weighting
+
+
+def get_noisy_model_input_and_timesteps(
+    args,
+    latents: torch.Tensor,
+    noise: torch.Tensor,
+    device: torch.device,
+    dtype: torch.dtype,
+):
+    """Generate noisy inputs using Anima-Standalone-Trainer style rectified-flow sampling."""
+    bsz = latents.shape[0]
+    if bsz <= 0:
+        raise ValueError("Batch size must be > 0")
+
+    timestep_sample_method = getattr(args, "timestep_sample_method", None)
+    timestep_sampling = getattr(args, "timestep_sampling", None)
+    if timestep_sample_method is None and timestep_sampling in {"shift", "flux_shift", "sigma"}:
+        from library import flux_train_utils
+
+        noise_scheduler = FlowMatchEulerDiscreteScheduler(num_train_timesteps=1000, shift=args.discrete_flow_shift)
+        return flux_train_utils.get_noisy_model_input_and_timesteps(
+            args, noise_scheduler, latents, noise, device, dtype
+        )
+
+    if timestep_sample_method is None:
+        if timestep_sampling == "uniform":
+            timestep_sample_method = "uniform"
+        else:
+            timestep_sample_method = "logit_normal"
+
+    if timestep_sample_method == "logit_normal":
+        sigmas = torch.sigmoid(args.sigmoid_scale * torch.randn((bsz,), device=device))
+    elif timestep_sample_method == "uniform":
+        sigmas = torch.rand((bsz,), device=device)
+    else:
+        raise ValueError(f"Unsupported timestep_sample_method: {timestep_sample_method}")
+
+    flow_shift = float(getattr(args, "discrete_flow_shift", 1.0))
+    if flow_shift != 1.0:
+        sigmas = (sigmas * flow_shift) / (1 + (flow_shift - 1) * sigmas)
+
+    timesteps = sigmas * 1000.0
+    sigmas_view = sigmas.view(-1, 1, 1, 1) if latents.ndim == 4 else sigmas.view(-1, 1, 1, 1, 1)
+    noisy_model_input = (1.0 - sigmas_view) * latents + sigmas_view * noise
+
+    return noisy_model_input.to(dtype), timesteps.to(dtype), sigmas
 
 
 # Parameter groups (6 groups with separate LRs)

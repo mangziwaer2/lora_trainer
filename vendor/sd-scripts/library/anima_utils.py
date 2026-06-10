@@ -28,6 +28,47 @@ FP8_OPTIMIZATION_TARGET_KEYS = ["blocks", ""]
 # ".embed." excludes Embedding in LLMAdapter
 FP8_OPTIMIZATION_EXCLUDE_KEYS = ["_embedder", "norm", "adaln", "final_layer", ".embed."]
 
+DEFAULT_DIT_CONFIG = {
+    "max_img_h": 512,
+    "max_img_w": 512,
+    "max_frames": 128,
+    "in_channels": 16,
+    "out_channels": 16,
+    "patch_spatial": 2,
+    "patch_temporal": 1,
+    "model_channels": 2048,
+    "concat_padding_mask": True,
+    "crossattn_emb_channels": 1024,
+    "pos_emb_cls": "rope3d",
+    "pos_emb_learnable": True,
+    "pos_emb_interpolation": "crop",
+    "min_fps": 1,
+    "max_fps": 30,
+    "use_adaln_lora": True,
+    "adaln_lora_dim": 256,
+    "num_blocks": 28,
+    "num_heads": 16,
+    "extra_per_block_abs_pos_emb": False,
+    "rope_h_extrapolation_ratio": 4.0,
+    "rope_w_extrapolation_ratio": 4.0,
+    "rope_t_extrapolation_ratio": 1.0,
+    "extra_h_extrapolation_ratio": 1.0,
+    "extra_w_extrapolation_ratio": 1.0,
+    "extra_t_extrapolation_ratio": 1.0,
+    "rope_enable_fps_modulation": False,
+    "use_llm_adapter": True,
+}
+
+
+def get_dit_config(state_dict: Optional[Dict[str, torch.Tensor]] = None, key_prefix: str = "") -> Dict[str, Union[int, float, bool, str]]:
+    """Compatibility helper for Anima-Standalone-Trainer style loaders.
+
+    The current bundled implementation still uses a fixed DiT config, so this returns
+    the known-good configuration and ignores the optional state_dict/key_prefix inputs.
+    """
+    del state_dict, key_prefix
+    return dict(DEFAULT_DIT_CONFIG)
+
 
 def load_anima_model(
     device: Union[str, torch.device],
@@ -63,39 +104,9 @@ def load_anima_model(
     device = torch.device(device)
     loading_device = torch.device(loading_device)
 
-    # We currently support fixed DiT config for Anima models
-    dit_config = {
-        "max_img_h": 512,
-        "max_img_w": 512,
-        "max_frames": 128,
-        "in_channels": 16,
-        "out_channels": 16,
-        "patch_spatial": 2,
-        "patch_temporal": 1,
-        "model_channels": 2048,
-        "concat_padding_mask": True,
-        "crossattn_emb_channels": 1024,
-        "pos_emb_cls": "rope3d",
-        "pos_emb_learnable": True,
-        "pos_emb_interpolation": "crop",
-        "min_fps": 1,
-        "max_fps": 30,
-        "use_adaln_lora": True,
-        "adaln_lora_dim": 256,
-        "num_blocks": 28,
-        "num_heads": 16,
-        "extra_per_block_abs_pos_emb": False,
-        "rope_h_extrapolation_ratio": 4.0,
-        "rope_w_extrapolation_ratio": 4.0,
-        "rope_t_extrapolation_ratio": 1.0,
-        "extra_h_extrapolation_ratio": 1.0,
-        "extra_w_extrapolation_ratio": 1.0,
-        "extra_t_extrapolation_ratio": 1.0,
-        "rope_enable_fps_modulation": False,
-        "use_llm_adapter": True,
-        "attn_mode": attn_mode,
-        "split_attn": split_attn,
-    }
+    dit_config = get_dit_config()
+    dit_config["attn_mode"] = attn_mode
+    dit_config["split_attn"] = split_attn
     with init_empty_weights():
         model = anima_models.Anima(**dit_config)
         if dit_weight_dtype is not None:
@@ -153,6 +164,58 @@ def load_anima_model(
     logger.info(f"Loaded DiT model from {dit_path}, unexpected missing keys: {len(missing)}, unexpected keys: {len(unexpected)}")
 
     return model
+
+
+def load_anima_dit(
+    dit_path: str,
+    device: Union[str, torch.device] = "cpu",
+    attn_mode: str = "torch",
+    split_attn: bool = False,
+    dtype: Optional[torch.dtype] = torch.bfloat16,
+    fp8_scaled: bool = False,
+    lora_weights_list: Optional[List[Dict[str, torch.Tensor]]] = None,
+    lora_multipliers: Optional[list[float]] = None,
+) -> anima_models.Anima:
+    """Compatibility wrapper matching Anima-Standalone-Trainer style helper naming."""
+    return load_anima_model(
+        device=device,
+        dit_path=dit_path,
+        attn_mode=attn_mode,
+        split_attn=split_attn,
+        loading_device=device,
+        dit_weight_dtype=dtype,
+        fp8_scaled=fp8_scaled,
+        lora_weights_list=lora_weights_list,
+        lora_multipliers=lora_multipliers,
+    )
+
+
+def load_anima_vae(
+    vae_path: str,
+    device: Union[str, torch.device] = "cpu",
+    disable_cache: bool = True,
+    chunk_size: Optional[int] = 64,
+):
+    """Compatibility wrapper matching Anima-Standalone-Trainer style helper naming."""
+    from library import qwen_image_autoencoder_kl
+
+    return qwen_image_autoencoder_kl.load_vae(
+        vae_path,
+        device=device,
+        disable_mmap=True,
+        spatial_chunk_size=chunk_size,
+        disable_cache=disable_cache,
+    )
+
+
+def vae_encode(vae, pixels: torch.Tensor) -> torch.Tensor:
+    """Compatibility wrapper for Anima-Standalone-Trainer style VAE encode helper."""
+    return vae.encode_pixels_to_latents(pixels)
+
+
+def vae_decode(vae, latents: torch.Tensor) -> torch.Tensor:
+    """Compatibility wrapper for Anima-Standalone-Trainer style VAE decode helper."""
+    return vae.decode_to_pixels(latents)
 
 
 def load_qwen3_tokenizer(qwen3_path: str):

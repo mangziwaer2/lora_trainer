@@ -60,7 +60,11 @@ DEFAULTS: dict[str, Any] = {
     "text_encoder_lr": None,
     "optimizer_type": "AdamW8bit",
     "lr_scheduler": "constant",
+    "lr_warmup_steps": 0,
+    "lr_scheduler_num_cycles": 1,
+    "lr_scheduler_power": 1.0,
     "timestep_sampling": "sigmoid",
+    "timestep_sample_method": None,
     "discrete_flow_shift": 1.0,
     "sigmoid_scale": 1.0,
     "weighting_scheme": "uniform",
@@ -71,6 +75,10 @@ DEFAULTS: dict[str, Any] = {
     "max_train_steps": None,
     "save_every_n_epochs": 1,
     "save_every_n_steps": None,
+    "save_last_n_steps": None,
+    "save_last_n_steps_state": None,
+    "save_last_n_epochs": None,
+    "save_last_n_epochs_state": None,
     "mixed_precision": "bf16",
     "gradient_checkpointing": True,
     "cache_latents": True,
@@ -124,6 +132,10 @@ DEFAULTS: dict[str, Any] = {
     "validate_every_n_epochs": None,
     "max_validation_steps": None,
     "blocks_to_swap": None,
+    "attn_mode": None,
+    "split_attn": False,
+    "max_data_loader_n_workers": 8,
+    "persistent_data_loader_workers": False,
     "unsloth_offload_checkpointing": False,
     "cpu_offload_checkpointing": False,
     "extra_args": [],
@@ -308,7 +320,16 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--optimizer-type", "--optimizer", dest="optimizer_type", default=None, help="Optimizer type.")
     parser.add_argument("--lr-scheduler", default=None, help="Learning-rate scheduler.")
+    parser.add_argument("--lr-warmup-steps", type=float, default=None, help="LR warmup steps or ratio supported by sd-scripts.")
+    parser.add_argument("--lr-scheduler-num-cycles", type=float, default=None, help="Cycle count for cosine-with-restarts style schedulers.")
+    parser.add_argument("--lr-scheduler-power", type=float, default=None, help="Polynomial scheduler power.")
     parser.add_argument("--timestep-sampling", default=None, help="Anima timestep sampling mode.")
+    parser.add_argument(
+        "--timestep-sample-method",
+        default=None,
+        choices=["logit_normal", "uniform"],
+        help="Anima-Standalone-Trainer compatible timestep sampling method.",
+    )
     parser.add_argument("--discrete-flow-shift", type=float, default=None, help="Discrete flow shift.")
     parser.add_argument("--sigmoid-scale", type=float, default=None, help="Scale for sigmoid timestep sampling.")
     parser.add_argument("--weighting-scheme", default=None, help="Loss/timestep weighting scheme.")
@@ -319,6 +340,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-train-steps", "--steps", dest="max_train_steps", type=int, default=None, help="Optional explicit max training steps.")
     parser.add_argument("--save-every-n-epochs", type=int, default=None, help="Checkpoint save interval in epochs.")
     parser.add_argument("--save-every-n-steps", "--save-every", dest="save_every_n_steps", type=int, default=None, help="Checkpoint save interval in steps.")
+    parser.add_argument("--save-last-n-steps", type=int, default=None, help="Keep only the last N step checkpoints.")
+    parser.add_argument("--save-last-n-steps-state", type=int, default=None, help="Keep only the last N step state checkpoints.")
+    parser.add_argument("--save-last-n-epochs", type=int, default=None, help="Keep only the last N epoch checkpoints.")
+    parser.add_argument("--save-last-n-epochs-state", type=int, default=None, help="Keep only the last N epoch state checkpoints.")
     parser.add_argument("--mixed-precision", "--dtype", dest="mixed_precision", default=None, help="Mixed precision mode, for example bf16.")
     parser.add_argument(
         "--gradient-checkpointing",
@@ -438,6 +463,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--validate-every-n-epochs", type=int, default=None, help="Run validation every N epochs.")
     parser.add_argument("--max-validation-steps", type=int, default=None, help="Maximum validation items per validation run.")
     parser.add_argument("--blocks-to-swap", type=int, default=None, help="Optional block swapping count for VRAM reduction.")
+    parser.add_argument("--attn-mode", default=None, choices=["torch", "xformers", "flash", "sageattn", "sdpa"], help="Attention implementation mode.")
+    parser.add_argument("--split-attn", action=argparse.BooleanOptionalAction, default=None, help="Split attention computation to reduce memory.")
+    parser.add_argument("--max-data-loader-n-workers", type=int, default=None, help="Maximum dataloader worker count.")
+    parser.add_argument(
+        "--persistent-data-loader-workers",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Keep dataloader workers alive between epochs.",
+    )
     parser.add_argument(
         "--unsloth-offload-checkpointing",
         action=argparse.BooleanOptionalAction,
@@ -810,6 +844,8 @@ def merge_settings(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError("Bucket resolution range is invalid")
     if settings["network_dim"] < 1:
         raise ValueError("network_dim must be >= 1")
+    if settings["network_alpha"] is None:
+        settings["network_alpha"] = int(settings["network_dim"])
     if settings["max_train_epochs"] is None and settings["max_train_steps"] is None:
         raise ValueError("One of max_train_steps/steps or max_train_epochs must be provided")
     if settings["max_train_epochs"] is not None and settings["max_train_epochs"] < 1:
@@ -852,6 +888,16 @@ def merge_settings(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError("validate_every_n_epochs must be >= 1 when provided")
     if settings["max_validation_steps"] is not None and settings["max_validation_steps"] < 1:
         raise ValueError("max_validation_steps must be >= 1 when provided")
+    if settings["max_data_loader_n_workers"] is not None and settings["max_data_loader_n_workers"] < 0:
+        raise ValueError("max_data_loader_n_workers must be >= 0 when provided")
+    if settings["save_last_n_steps"] is not None and settings["save_last_n_steps"] < 1:
+        raise ValueError("save_last_n_steps must be >= 1 when provided")
+    if settings["save_last_n_steps_state"] is not None and settings["save_last_n_steps_state"] < 1:
+        raise ValueError("save_last_n_steps_state must be >= 1 when provided")
+    if settings["save_last_n_epochs"] is not None and settings["save_last_n_epochs"] < 1:
+        raise ValueError("save_last_n_epochs must be >= 1 when provided")
+    if settings["save_last_n_epochs_state"] is not None and settings["save_last_n_epochs_state"] < 1:
+        raise ValueError("save_last_n_epochs_state must be >= 1 when provided")
     if settings["initial_epoch"] is not None and settings["initial_epoch"] < 1:
         raise ValueError("initial_epoch must be >= 1 when provided")
     if settings["initial_step"] is not None and settings["initial_step"] < 0:
@@ -1109,6 +1155,12 @@ def build_command(settings: dict[str, Any], dataset_config_path: Path, sample_pr
             settings["optimizer_type"],
             "--lr_scheduler",
             settings["lr_scheduler"],
+            "--lr_warmup_steps",
+            str(settings["lr_warmup_steps"]),
+            "--lr_scheduler_num_cycles",
+            str(settings["lr_scheduler_num_cycles"]),
+            "--lr_scheduler_power",
+            str(settings["lr_scheduler_power"]),
             "--timestep_sampling",
             settings["timestep_sampling"],
             "--discrete_flow_shift",
@@ -1138,6 +1190,7 @@ def build_command(settings: dict[str, Any], dataset_config_path: Path, sample_pr
 
     append_arg(command, "--network_alpha", int(settings["network_alpha"]) if settings["network_alpha"] is not None else None)
     append_arg(command, "--network_dropout", settings["network_dropout"])
+    append_arg(command, "--timestep_sample_method", settings["timestep_sample_method"])
     append_arg(command, "--unet_lr", settings["unet_lr"])
     append_arg(command, "--validation_seed", settings["validation_seed"])
     append_arg(command, "--validation_split", settings["validation_split"] if settings["validation_split"] > 0 else None)
@@ -1145,8 +1198,10 @@ def build_command(settings: dict[str, Any], dataset_config_path: Path, sample_pr
     append_arg(command, "--validate_every_n_epochs", settings["validate_every_n_epochs"])
     append_arg(command, "--max_validation_steps", settings["max_validation_steps"])
     append_arg(command, "--blocks_to_swap", settings["blocks_to_swap"])
+    append_arg(command, "--attn_mode", settings["attn_mode"])
     append_arg(command, "--vae_batch_size", settings["vae_batch_size"])
     append_arg(command, "--text_encoder_batch_size", settings["text_encoder_batch_size"])
+    append_arg(command, "--max_data_loader_n_workers", settings["max_data_loader_n_workers"])
     append_arg(command, "--llm_adapter_lr", settings["llm_adapter_lr"])
     append_arg(command, "--self_attn_lr", settings["self_attn_lr"])
     append_arg(command, "--cross_attn_lr", settings["cross_attn_lr"])
@@ -1160,6 +1215,10 @@ def build_command(settings: dict[str, Any], dataset_config_path: Path, sample_pr
         command.extend(["--save_every_n_steps", str(int(settings["save_every_n_steps"]))])
     elif settings["max_train_epochs"] is not None and settings["save_every_n_epochs"] is not None:
         command.extend(["--save_every_n_epochs", str(int(settings["save_every_n_epochs"]))])
+    append_arg(command, "--save_last_n_steps", settings["save_last_n_steps"])
+    append_arg(command, "--save_last_n_steps_state", settings["save_last_n_steps_state"])
+    append_arg(command, "--save_last_n_epochs", settings["save_last_n_epochs"])
+    append_arg(command, "--save_last_n_epochs_state", settings["save_last_n_epochs_state"])
 
     if settings["text_encoder_lr"] is not None:
         command.append("--text_encoder_lr")
@@ -1251,6 +1310,8 @@ def build_command(settings: dict[str, Any], dataset_config_path: Path, sample_pr
     append_flag(command, "--save_state", settings["save_state"])
     append_flag(command, "--save_state_on_train_end", settings["save_state_on_train_end"])
     append_flag(command, "--skip_until_initial_step", settings["skip_until_initial_step"])
+    append_flag(command, "--split_attn", settings["split_attn"])
+    append_flag(command, "--persistent_data_loader_workers", settings["persistent_data_loader_workers"])
     append_flag(command, "--unsloth_offload_checkpointing", settings["unsloth_offload_checkpointing"])
     append_flag(command, "--cpu_offload_checkpointing", settings["cpu_offload_checkpointing"])
     append_arg(command, "--initial_epoch", settings["initial_epoch"])
