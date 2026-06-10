@@ -58,6 +58,23 @@ class AnimaNetworkTrainer(train_network.NetworkTrainer):
             assert train_dataset_group.is_text_encoder_output_cacheable(
                 cache_supports_dropout=True
             ), "when caching Text Encoder output, shuffle_caption, token_warmup_step or caption_tag_dropout_rate cannot be used"
+            all_dropout_rates = [float(getattr(subset, "caption_dropout_rate", 0.0) or 0.0) for subset in train_dataset_group.subsets]
+            if val_dataset_group is not None:
+                all_dropout_rates.extend(float(getattr(subset, "caption_dropout_rate", 0.0) or 0.0) for subset in val_dataset_group.subsets)
+
+            effective_dropout_rate = max(all_dropout_rates) if len(all_dropout_rates) > 0 else 0.0
+            if effective_dropout_rate > 0.0:
+                logger.info(f"Using embedding-level caption dropout rate: {effective_dropout_rate}")
+                args.caption_dropout_rate = effective_dropout_rate
+
+            # Disable dataset-side string dropout so caption dropout is applied only at embedding level.
+            for subset in train_dataset_group.subsets:
+                subset.caption_dropout_rate = 0.0
+                subset.caption_dropout_every_n_epochs = 0
+            if val_dataset_group is not None:
+                for subset in val_dataset_group.subsets:
+                    subset.caption_dropout_rate = 0.0
+                    subset.caption_dropout_every_n_epochs = 0
 
         assert (
             args.network_train_unet_only or not args.cache_text_encoder_outputs
@@ -155,7 +172,10 @@ class AnimaNetworkTrainer(train_network.NetworkTrainer):
         return strategy_anima.AnimaLatentsCachingStrategy(args.cache_latents_to_disk, args.vae_batch_size, args.skip_cache_check)
 
     def get_text_encoding_strategy(self, args):
-        return strategy_anima.AnimaTextEncodingStrategy()
+        dropout_rate = 0.0
+        if hasattr(args, "caption_dropout_rate") and args.caption_dropout_rate is not None:
+            dropout_rate = float(args.caption_dropout_rate)
+        return strategy_anima.AnimaTextEncodingStrategy(dropout_rate=dropout_rate)
 
     def post_process_network(self, args, accelerator, network, text_encoders, unet):
         pass
@@ -168,7 +188,11 @@ class AnimaNetworkTrainer(train_network.NetworkTrainer):
     def get_text_encoder_outputs_caching_strategy(self, args):
         if args.cache_text_encoder_outputs:
             return strategy_anima.AnimaTextEncoderOutputsCachingStrategy(
-                args.cache_text_encoder_outputs_to_disk, args.text_encoder_batch_size, args.skip_cache_check, False
+                args.cache_text_encoder_outputs_to_disk,
+                args.text_encoder_batch_size,
+                args.skip_cache_check,
+                False,
+                dropout_rate=float(getattr(args, "caption_dropout_rate", 0.0) or 0.0),
             )
         return None
 

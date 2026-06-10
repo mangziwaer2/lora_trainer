@@ -76,15 +76,20 @@ class AnimaTextEncodingStrategy(TextEncodingStrategy):
     T5 tokens are passed through unchanged (only used by LLM Adapter).
     """
 
-    def __init__(self) -> None:
+    def __init__(self, dropout_rate: float = 0.0) -> None:
         super().__init__()
+        self.dropout_rate = float(dropout_rate)
         self._uncond_prompt_embeds = None
         self._uncond_attn_mask = None
         self._uncond_t5_input_ids = None
         self._uncond_t5_attn_mask = None
 
     def encode_tokens(
-        self, tokenize_strategy: TokenizeStrategy, models: List[Any], tokens: List[torch.Tensor]
+        self,
+        tokenize_strategy: TokenizeStrategy,
+        models: List[Any],
+        tokens: List[torch.Tensor],
+        enable_dropout: bool = False,
     ) -> List[torch.Tensor]:
         """Encode Qwen3 tokens and return embeddings + T5 token IDs.
 
@@ -107,6 +112,18 @@ class AnimaTextEncodingStrategy(TextEncodingStrategy):
         outputs = qwen3_text_encoder(input_ids=qwen3_input_ids, attention_mask=qwen3_attn_mask)
         prompt_embeds = outputs.last_hidden_state
         prompt_embeds[~qwen3_attn_mask.bool()] = 0
+
+        if enable_dropout and self.dropout_rate > 0.0:
+            if self._uncond_prompt_embeds is None:
+                self.cache_uncond_embeddings(tokenize_strategy, models)
+
+            batch_size = prompt_embeds.shape[0]
+            for i in range(batch_size):
+                if random.random() < self.dropout_rate:
+                    prompt_embeds[i] = self._uncond_prompt_embeds.to(prompt_embeds.device, dtype=prompt_embeds.dtype)
+                    qwen3_attn_mask[i] = self._uncond_attn_mask.to(qwen3_attn_mask.device, dtype=qwen3_attn_mask.dtype)
+                    t5_input_ids[i] = self._uncond_t5_input_ids.to(t5_input_ids.device, dtype=t5_input_ids.dtype)
+                    t5_attn_mask[i] = self._uncond_t5_attn_mask.to(t5_attn_mask.device, dtype=t5_attn_mask.dtype)
 
         return [prompt_embeds, qwen3_attn_mask, t5_input_ids, t5_attn_mask]
 
@@ -168,7 +185,7 @@ class AnimaTextEncodingStrategy(TextEncodingStrategy):
         tokens_and_masks = tokenize_strategy.tokenize("")
         with torch.no_grad():
             prompt_embeds, attn_mask, t5_input_ids, t5_attn_mask = self.encode_tokens(
-                tokenize_strategy, models, tokens_and_masks
+                tokenize_strategy, models, tokens_and_masks, enable_dropout=False
             )
 
         self._uncond_prompt_embeds = prompt_embeds[0].detach().cpu()
@@ -191,8 +208,10 @@ class AnimaTextEncoderOutputsCachingStrategy(TextEncoderOutputsCachingStrategy):
         batch_size: int,
         skip_disk_cache_validity_check: bool,
         is_partial: bool = False,
+        dropout_rate: float = 0.0,
     ) -> None:
         super().__init__(cache_to_disk, batch_size, skip_disk_cache_validity_check, is_partial)
+        self.dropout_rate = float(dropout_rate)
 
     def get_outputs_npz_path(self, image_abs_path: str) -> str:
         return os.path.splitext(image_abs_path)[0] + self.ANIMA_TEXT_ENCODER_OUTPUTS_NPZ_SUFFIX
@@ -261,7 +280,8 @@ class AnimaTextEncoderOutputsCachingStrategy(TextEncoderOutputsCachingStrategy):
             attn_mask_i = attn_mask[i]
             t5_input_ids_i = t5_input_ids[i]
             t5_attn_mask_i = t5_attn_mask[i]
-            caption_dropout_rate = torch.tensor(info.caption_dropout_rate, dtype=torch.float32)
+            effective_dropout_rate = self.dropout_rate if self.dropout_rate > 0.0 else info.caption_dropout_rate
+            caption_dropout_rate = torch.tensor(effective_dropout_rate, dtype=torch.float32)
 
             if self.cache_to_disk:
                 np.savez(
